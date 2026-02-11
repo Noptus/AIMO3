@@ -1,0 +1,15 @@
+{
+  "id": "raphaelcaillon/aimo3-progress-prize-3-working",
+  "title": "AIMO3 Progress Prize 3 Working",
+  "code_file": "aimo3_submission.ipynb",
+  "language": "python",
+  "kernel_type": "notebook",
+  "is_private": "true",
+  "enable_gpu": "false",
+  "enable_internet": "false",
+  "competition_sources": [
+    "ai-mathematical-olympiad-progress-prize-3"
+  ],
+  "dataset_sources": [],
+  "model_sources": []
+}

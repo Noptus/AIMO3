@@ -1,8 +1,0 @@
-requests>=2.32.3
-pandas>=2.2.2
-python-dotenv>=1.0.1
-kaggle>=1.7.4
-
-[dev]
-pytest>=8.3.0
-ruff>=0.6.0

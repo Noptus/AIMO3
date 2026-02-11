@@ -8,6 +8,21 @@ version = "0.1.0"
 description = "Composable AIMO3 baseline with tool-integrated reasoning and Kaggle API automation"
 readme = "README.md"
 requires-python = ">=3.9"
+license = {text = "MIT"}
+authors = [
+  {name = "AIMO3 Contributors"},
+]
+keywords = ["kaggle", "math", "olympiad", "llm", "reasoning", "automation"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Science/Research",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
 dependencies = [
   "requests>=2.32.3",
   "pandas>=2.2.2",
@@ -15,17 +30,37 @@ dependencies = [
   "kaggle>=1.7.4",
 ]
 
+[project.urls]
+Homepage = "https://github.com/raphaelcaillon/AIMO3"
+Repository = "https://github.com/raphaelcaillon/AIMO3"
+Issues = "https://github.com/raphaelcaillon/AIMO3/issues"
+
 [project.optional-dependencies]
 dev = [
   "pytest>=8.3.0",
   "ruff>=0.6.0",
+  "build>=1.2.2",
+  "twine>=5.1.1",
+  "pre-commit>=3.8.0",
+  "types-requests>=2.32.0.20241016",
 ]
 
 [project.scripts]
 aimo3 = "aimo3.cli:main"
 
+[tool.setuptools]
+package-dir = {"" = "src"}
+
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.ruff]
+target-version = "py39"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+ignore = ["E501"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

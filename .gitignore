@@ -4,9 +4,15 @@ __pycache__/
 *.pyc
 .pytest_cache/
 .ruff_cache/
+.mypy_cache/
+.coverage
+coverage.xml
 .venv/
 data/
 artifacts/
 *.zip
 kaggle.json
 *.ipynb_checkpoints
+build/
+dist/
+*.egg-info/

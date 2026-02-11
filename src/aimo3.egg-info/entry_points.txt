@@ -1,2 +1,0 @@
-[console_scripts]
-aimo3 = aimo3.cli:main
