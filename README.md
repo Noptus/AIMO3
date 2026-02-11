@@ -1,35 +1,76 @@
 # AIMO3
 
-Production-ready baseline for the Kaggle competition `ai-mathematical-olympiad-progress-prize-3` with:
+Composable Kaggle solver framework for `ai-mathematical-olympiad-progress-prize-3` with:
 
-- `gpt-oss-120b`-first inference (or any OpenAI-compatible model endpoint)
-- multi-attempt prompting and weighted answer aggregation
-- GenSelect-style selector pass over top candidate answers
-- adversarial probe stage to refute fragile consensus candidates
-- geometry-specialist recheck stage for geometry candidate arbitration
-- tool-integrated reasoning via constrained Python sandbox execution
-- robust modulus + answer parsing (including LaTeX forms like `$10^{5}$`, `$5^7$`, `$99991$`)
-- Kaggle API automation for download, submit, and score polling
+- multi-attempt LLM solving (`gpt-oss-120b` first, any OpenAI-compatible endpoint)
+- agentic Python-sandbox execution loop (model -> code -> sandbox output -> model follow-up)
+- stage-based arbitration (`verification`, `consistency_audit`, `adversarial_probe`, `geometry_recheck`, `selector`)
+- anti-collapse guards for trivial outputs (`0/1` penalties + dedicated guard stages)
+- Kaggle automation for competition files, notebook packaging, and submission plumbing
 
-## Project standards
+## Is The LLM Agentic Right Now?
 
-- Source layout: `src/` package + explicit CLI entrypoint
-- Quality checks: `ruff` linting + unit tests
-- CI: GitHub Actions on push and pull request (`.github/workflows/ci.yml`)
-- Contribution and security process: `CONTRIBUTING.md` and `SECURITY.md`
+Yes, partially and explicitly.
 
-## Repository layout
+Current solver behavior (`src/aimo3/solver.py`):
 
-- `src/aimo3/prompts.py`: typed prompt routing and templates
-- `src/aimo3/parsing.py`: modulus extraction, answer extraction, weighted mode
-- `src/aimo3/sandbox.py`: code safety validation + constrained execution
-- `src/aimo3/solver.py`: orchestration across attempts and code verification
-- `src/aimo3/pipeline.py`: dataframe batch solve + artifact writers
-- `src/aimo3/kaggle_api.py`: Kaggle API wrapper with submission polling
-- `src/aimo3/cli.py`: end-to-end CLI (`solve`, `kaggle-download`, `kaggle-submit`, `kaggle-pipeline`)
-- `notebooks/aimo3_first_attempt.ipynb`: polished first notebook for iterative development
+1. model generates a candidate solution
+2. fenced Python code blocks are extracted and executed in the local sandbox
+3. solver builds tool observations from stdout/errors
+4. model receives a follow-up prompt with those observations (`agentic_tool_rounds`)
+5. final answer is aggregated with additional verifier/recheck/selector stages
 
-## Quick start
+This is a practical agent loop with bounded tool rounds. It is not an unrestricted autonomous tool planner; it is a controlled math-solver agent with sandboxed Python execution.
+
+## Core Architecture
+
+- `src/aimo3/prompts.py`
+  - problem classification + archetype routing
+  - base solve prompt + specialist prompts (repair, verification, selector, adversarial probe, extractor)
+- `src/aimo3/sandbox.py`
+  - constrained Python execution for tool-integrated reasoning
+- `src/aimo3/solver.py`
+  - multi-attempt orchestration
+  - agentic tool rounds
+  - stage pipeline and weighted aggregation
+- `src/aimo3/parsing.py`
+  - modulus extraction (including LaTeX forms like `$10^{5}$`, `$5^7$`, `$99991$`)
+  - robust final answer extraction
+- `src/aimo3/cli.py`
+  - end-to-end commands for solve, benchmark, and Kaggle operations
+- `kaggle_kernel_submission/`
+  - notebook package used for competition kernel execution (internet disabled mode)
+
+## Solver Stage Pipeline
+
+Per problem, the current default flow is:
+
+1. `initial` diversified attempts (proof-first/code-first mix)
+2. bounded agentic tool follow-up rounds (`--agentic-tool-rounds`)
+3. optional repair pass
+4. optional strict extractor pass
+5. optional verification arbitration
+6. sparse-recovery attempts when evidence is too thin
+7. consistency audit stage
+8. adversarial probe stage
+9. geometry recheck stage (geometry only)
+10. small-answer guard stage
+11. selector stage
+12. fallback guess (last resort)
+
+Final aggregation rewards:
+
+- code-verified traces
+- cross-stage agreement/diversity
+- verifier/audit/probe/selector support
+
+And penalizes:
+
+- weak tiny answers
+- problem-echo numbers
+- unsupported trivial consensus
+
+## Quick Start
 
 ```bash
 python3 -m venv .venv
@@ -39,81 +80,131 @@ pip install -e .
 cp .env.example .env
 ```
 
-Set environment values in `.env`:
+Minimal `.env`:
 
 ```bash
-AIMO_BASE_URL=http://127.0.0.1:8000/v1
 AIMO_MODEL=openai/gpt-oss-120b
+AIMO_BASE_URL=https://api.groq.com/openai/v1
 AIMO_API_KEY=
 GROQ_API_KEY=
-KAGGLE_USERNAME=...
-KAGGLE_KEY=...
+KAGGLE_USERNAME=
+KAGGLE_KEY=
+# optional: KAGGLE_API_TOKEN=username:key
 ```
 
-If `GROQ_API_KEY` is set and `AIMO_BASE_URL` is not set, the CLI automatically targets `https://api.groq.com/openai/v1`.
-For Groq + `openai/gpt-oss-*`, the CLI also auto-enables hosted `code_interpreter` to avoid tool-call failures on hard math prompts.
+## Main Commands
 
-## Baseline usage
-
-### 1) Solve problems -> create submission CSV
+### Solve CSV
 
 ```bash
 aimo3 solve \
   --input-csv examples/sample_problems.csv \
   --output-csv artifacts/submission.csv \
   --debug-json artifacts/debug_traces.json \
-  --attempts 8
+  --profile balanced
 ```
 
-Low-cost smoke test on hosted API:
+### Benchmark on labeled reference
 
 ```bash
-aimo3 solve \
-  --input-csv examples/sample_problems.csv \
-  --output-csv artifacts/submission.csv \
-  --debug-json artifacts/debug_traces.json \
-  --attempts 1 \
-  --max-tokens 256 \
-  --temperatures 0.2 \
-  --reasoning-effort low
+PYTHONPATH=src python -m aimo3.cli benchmark-reference \
+  --reference-csv reference/ai-mathematical-olympiad-progress-prize-3/reference.csv \
+  --output-dir artifacts/reference_benchmark \
+  --profile aimo120b \
+  --model openai/gpt-oss-120b \
+  --reasoning-effort high
 ```
 
-### 2) Submit CSV to Kaggle and wait for score
+### Kaggle API (file submission path)
 
 ```bash
-aimo3 kaggle-submit \
-  --competition ai-mathematical-olympiad-progress-prize-3 \
-  --submission-csv artifacts/submission.csv \
-  --message "first composable baseline" \
-  --wait
+aimo3 kaggle-download --competition ai-mathematical-olympiad-progress-prize-3 --output-dir data/raw
+aimo3 kaggle-submit --competition ai-mathematical-olympiad-progress-prize-3 --submission-csv artifacts/submission.csv --wait
 ```
 
-### 3) Fully automated pipeline (solve + submit)
+### Kaggle notebook push (code competition workflow)
 
 ```bash
-aimo3 kaggle-pipeline \
-  --competition ai-mathematical-olympiad-progress-prize-3 \
-  --input-csv /path/to/test.csv \
-  --output-csv artifacts/submission.csv \
-  --debug-json artifacts/debug_traces.json \
-  --attempts 10 \
-  --wait
+kaggle kernels push -p kaggle_kernel_submission
 ```
 
-Equivalent shortcuts are available through `Makefile`:
+Then choose the pushed notebook version in Kaggle competition UI.
+
+## Profiles And Cost Control
+
+- `cheap`
+  - minimal attempts/tokens, reduced stages
+  - use for wiring checks
+- `balanced`
+  - practical default
+- `hard`
+  - stronger stage budget and verification
+- `aimo120b`
+  - maximum practical 120B configuration in this repo
+
+Recommended low-cost iteration:
+
+1. run `openai/gpt-oss-20b` on full set
+2. rerun uncertain/hard slice with `openai/gpt-oss-120b`
+3. submit best merged result
+
+## Agentic Controls
+
+New/important knobs:
+
+- `--agentic-tool-rounds` (default `1`)
+- `--agentic-observation-chars` (default `1200`)
+- `--max-code-blocks-per-attempt`
+- `--repair-passes`
+- `--final-extractor-passes`
+- `--consistency-audit-attempts`
+- `--adversarial-probe-attempts`
+- `--selector-attempts`
+
+Example (high effort):
 
 ```bash
-make test
-make solve-sample
-make solve-groq-cheap
-make benchmark-reference-groq-budget
-make benchmark-reference-groq-120b-max
-make kaggle-submit-120b
-make kaggle-download
-make kaggle-submit
+PYTHONPATH=src python -m aimo3.cli benchmark-reference \
+  --reference-csv reference/ai-mathematical-olympiad-progress-prize-3/reference.csv \
+  --output-dir artifacts/reference_benchmark_120b_robust \
+  --profile aimo120b \
+  --model openai/gpt-oss-120b \
+  --reasoning-effort high \
+  --agentic-tool-rounds 2 \
+  --max-code-blocks-per-attempt 4 \
+  --consistency-audit-attempts 2 \
+  --adversarial-probe-attempts 2 \
+  --geometry-recheck-attempts 2 \
+  --selector-attempts 2 \
+  --request-timeout 300
 ```
 
-## Development workflow
+## Kaggle Notebook Constraints
+
+Competition notebook constraints matter:
+
+- internet disabled during scoring
+- required output filename: `submission.parquet`
+- output must exist in `/kaggle/working`
+
+Notebook in `kaggle_kernel_submission/aimo3_submission.ipynb` is hardened to:
+
+- always write `/kaggle/working/submission.parquet`
+- validate parquet existence, schema, and row count
+- emit clear logs for output discovery
+
+## Interpreting Common Kaggle Logs
+
+Warnings like these are usually non-blocking:
+
+- debugger frozen module warning
+- `mistune` / `nbconvert` syntax/future warnings
+
+Blocking issue is typically only:
+
+- missing or invalid `submission.parquet`
+
+## Development
 
 ```bash
 make install-dev
@@ -122,136 +213,18 @@ make test
 make check
 ```
 
-Optional local hook installation:
+CI and standards:
 
-```bash
-pre-commit install
-```
+- `.github/workflows/ci.yml`
+- `CONTRIBUTING.md`
+- `SECURITY.md`
 
-## Kaggle API automation
+## Current Limitations
 
-Download competition files:
-
-```bash
-aimo3 kaggle-download \
-  --competition ai-mathematical-olympiad-progress-prize-3 \
-  --output-dir data/raw
-```
-
-Automation behavior:
-
-- authenticates using standard `KAGGLE_USERNAME` + `KAGGLE_KEY`
-- also accepts `KAGGLE_API_TOKEN=username:key`
-- submits with custom message
-- polls latest submission status until complete
-
-## Notebook
-
-Open `notebooks/aimo3_first_attempt.ipynb` for an interactive workflow:
-
-1. configure model endpoint
-2. run smoke test
-3. run batch inference
-4. auto-submit to Kaggle API
-
-## Testing
-
-```bash
-python3 -m unittest discover -s tests
-```
-
-## Notes on model strategy
-
-This baseline is intentionally composable and tuned for reliable first submissions:
-
-- prompt routing by problem type
-- multiple temperatures + diversified proof-first/code-first attempt modes
-- ratio-based early stopping by consensus confidence
-- contradiction-focused consistency audit + adversarial probe passes
-- geometry-aware prompt checklist (invariants + analytic fallback + independent cross-check)
-- code block extraction and sandbox verification for higher-confidence answers
-- anti-collapse safeguards (small-answer guard + fallback guess only when required)
-- answer aggregation that up-ranks code-verified/verifier/audit/probe/geometry-recheck/selector-backed candidates and down-ranks weak priors (tiny/problem-echo answers)
-
-Recommended next iteration steps:
-
-1. add model ensemble (secondary 32B model)
-2. increase attempt budget on hard-problem detector only
-3. calibrate answer weighting from offline validation (AIME/HMMT-like set)
-4. add stronger modulus disambiguation pass for edge-format statements
-
-## Cheapest way to run now
-
-For very low spend while validating pipeline plumbing:
-
-1. use `openai/gpt-oss-20b` for broad sweeps
-2. set `--attempts 1` and `--max-tokens 256`
-3. keep `--reasoning-effort low`
-4. rerun only uncertain/hard problems with `openai/gpt-oss-120b`
-
-For high-budget Groq runs on complex problems, use larger completion budgets (`--max-tokens 4096`) to avoid truncation before `FINAL_ANSWER`.
-
-Reference benchmark command (AIMO-focused, high budget):
-
-```bash
-PYTHONPATH=src python -m aimo3.cli benchmark-reference \
-  --reference-csv reference/ai-mathematical-olympiad-progress-prize-3/reference.csv \
-  --output-dir artifacts/reference_benchmark_20b_budget \
-  --profile balanced \
-  --model openai/gpt-oss-20b \
-  --reasoning-effort medium \
-  --attempts 2 \
-  --max-tokens 4096 \
-  --repair-passes 1 \
-  --final-extractor-passes 2 \
-  --verification-attempts 1 \
-  --verification-top-k 3 \
-  --max-code-blocks-per-attempt 3
-```
-
-Maximum-performance 120B reference benchmark:
-
-```bash
-PYTHONPATH=src python -m aimo3.cli benchmark-reference \
-  --reference-csv reference/ai-mathematical-olympiad-progress-prize-3/reference.csv \
-  --output-dir artifacts/reference_benchmark_120b_max \
-  --profile aimo120b \
-  --model openai/gpt-oss-120b \
-  --reasoning-effort high \
-  --attempts 8 \
-  --max-tokens 4096 \
-  --repair-passes 1 \
-  --final-extractor-passes 2 \
-  --verification-attempts 3 \
-  --verification-top-k 4 \
-  --consistency-audit-attempts 2 \
-  --consistency-audit-top-k 4 \
-  --consistency-audit-temperature 0.09 \
-  --adversarial-probe-attempts 2 \
-  --adversarial-probe-top-k 4 \
-  --adversarial-probe-temperature 0.14 \
-  --geometry-recheck-attempts 2 \
-  --geometry-top-k 4 \
-  --geometry-recheck-temperature 0.07 \
-  --small-answer-guard-attempts 2 \
-  --small-answer-guard-top-k 3 \
-  --small-answer-guard-temperature 0.10 \
-  --selector-attempts 2 \
-  --selector-top-k 4 \
-  --selector-temperature 0.05 \
-  --sparse-recovery-attempts 4 \
-  --sparse-recovery-temperature 0.1 \
-  --max-code-blocks-per-attempt 4 \
-  --request-timeout 300 \
-  --client-max-retries 2
-```
-
-Recommended pre-submission profile:
-
-- `--profile aimo120b`
-- 120B-first settings with diversified attempts, repair/extractor passes, geometry recheck + verifier + selector arbitration, and sparse-recovery attempts for timeout-heavy problems.
-- Pair with `--request-timeout 300 --client-max-retries 1` for long olympiad prompts.
+- Hosted API usage is unavailable in official offline Kaggle scoring runs.
+- True top-tier competition performance requires robust offline in-notebook inference stack (local model weights/runtime), not only API-mode orchestration.
+- Agent loop is intentionally bounded for reliability and runtime control.
 
 ## License
 
-MIT. See `LICENSE`.
+MIT (`LICENSE`).

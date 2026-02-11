@@ -17,6 +17,7 @@ from .parsing import (
 from .prompts import (
     ProblemProfile,
     build_adversarial_probe_prompt,
+    build_agent_followup_prompt,
     build_consistency_audit_prompt,
     build_fallback_guess_prompt,
     build_final_extractor_prompt,
@@ -40,6 +41,8 @@ class SolverConfig:
     early_stop_ratio: float = 0.8
     early_stop_attempt: int = 4
     max_code_blocks_per_attempt: int = 2
+    agentic_tool_rounds: int = 1
+    agentic_observation_chars: int = 1200
     default_answer: int = 0
 
     # Hard-problem behavior.
@@ -111,6 +114,7 @@ class Candidate:
     stage: str = "initial"
     code_blocks: int = 0
     code_verified: bool = False
+    agent_rounds: int = 0
     repair_used: bool = False
     extractor_used: bool = False
     code_answers: list[int] = field(default_factory=list)
@@ -157,6 +161,9 @@ class Candidate:
         if self.extractor_used:
             base += 0.05
 
+        if self.agent_rounds:
+            base += 0.08 * min(3, self.agent_rounds)
+
         if self.complexity == "hard":
             base += 0.1
 
@@ -191,6 +198,8 @@ class SolveResult:
             "candidate_count": len(self.candidates),
             "top_votes": votes.most_common(5),
             "verified_candidates": sum(1 for c in self.candidates if c.code_verified),
+            "agentic_candidates": sum(1 for c in self.candidates if c.agent_rounds > 0),
+            "max_agent_rounds": max((c.agent_rounds for c in self.candidates), default=0),
             "repair_candidates": sum(1 for c in self.candidates if c.repair_used),
             "extractor_candidates": sum(1 for c in self.candidates if c.extractor_used),
             "verifier_candidates": sum(1 for c in self.candidates if c.stage == "verifier"),
@@ -410,12 +419,70 @@ class AIMO3Solver:
                 generation_error=str(exc),
             )
 
+        code_answers: list[int] = []
+        sandbox_errors: list[str] = []
+        code_blocks_count = 0
+        answer: int | None = None
+        answer_source = "none"
         parsed = parse_answer_from_text(response_text, modulus=modulus)
-        answer = parsed.answer
-        code_answers, sandbox_errors, code_blocks_count = self._evaluate_code_blocks(response_text, modulus)
+        agent_rounds_used = 0
 
-        if answer is None and code_answers:
-            answer = Counter(code_answers).most_common(1)[0][0]
+        def refresh_from_response(text: str) -> tuple[list[int], list[str], int]:
+            nonlocal answer, answer_source, code_blocks_count, parsed
+            parsed = parse_answer_from_text(text, modulus=modulus)
+            phase_answer = parsed.answer
+            phase_answers, phase_errors, phase_blocks = self._evaluate_code_blocks(text, modulus)
+            code_answers.extend(phase_answers)
+            sandbox_errors.extend(phase_errors)
+            code_blocks_count += phase_blocks
+
+            if phase_answer is not None:
+                answer = phase_answer
+                answer_source = parsed.source
+            elif answer is None and code_answers:
+                answer = Counter(code_answers).most_common(1)[0][0]
+                answer_source = "code_majority"
+
+            return phase_answers, phase_errors, phase_blocks
+
+        phase_answers, phase_errors, phase_blocks = refresh_from_response(response_text)
+
+        for round_idx in range(self.config.agentic_tool_rounds):
+            if not self._should_continue_agent_loop(
+                answer=answer,
+                answer_source=answer_source,
+                code_blocks_in_response=phase_blocks,
+            ):
+                break
+
+            observation = self._build_agent_observation(
+                round_index=round_idx,
+                previous_response=response_text,
+                code_answers=phase_answers,
+                sandbox_errors=phase_errors,
+            )
+            followup_prompt = build_agent_followup_prompt(
+                problem_text,
+                previous_response=self._trim_for_prompt(response_text),
+                tool_observation=observation,
+                modulus=modulus,
+                profile=profile,
+                round_index=round_idx,
+            )
+
+            try:
+                response_text = self.client.generate(
+                    system_prompt=followup_prompt.system,
+                    user_prompt=followup_prompt.user,
+                    temperature=min(max(temperature, 0.1), 0.3),
+                    max_tokens=max_tokens,
+                )
+            except Exception as exc:
+                sandbox_errors.append(f"agent_generation_error_round_{round_idx + 1}: {exc}")
+                break
+
+            agent_rounds_used += 1
+            phase_answers, phase_errors, phase_blocks = refresh_from_response(response_text)
 
         repair_used = False
         extractor_used = False
@@ -445,6 +512,7 @@ class AIMO3Solver:
 
             parsed = parse_answer_from_text(response_text, modulus=modulus)
             answer = parsed.answer
+            answer_source = parsed.source
             extra_answers, extra_errors, extra_code_blocks = self._evaluate_code_blocks(response_text, modulus)
             code_answers.extend(extra_answers)
             sandbox_errors.extend(extra_errors)
@@ -452,6 +520,7 @@ class AIMO3Solver:
 
             if answer is None and code_answers:
                 answer = Counter(code_answers).most_common(1)[0][0]
+                answer_source = "code_majority"
 
         for _ in range(self.config.final_extractor_passes):
             if answer is not None:
@@ -476,6 +545,7 @@ class AIMO3Solver:
 
             parsed = parse_answer_from_text(response_text, modulus=modulus)
             answer = parsed.answer
+            answer_source = parsed.source
 
         code_verified = bool(answer is not None and code_answers and answer in code_answers)
 
@@ -484,7 +554,7 @@ class AIMO3Solver:
             temperature=temperature,
             response_text=response_text,
             answer=answer,
-            answer_source=parsed.source,
+            answer_source=answer_source,
             modulus=modulus,
             category=profile.category,
             archetype=profile.archetype,
@@ -492,6 +562,7 @@ class AIMO3Solver:
             stage="initial",
             code_blocks=code_blocks_count,
             code_verified=code_verified,
+            agent_rounds=agent_rounds_used,
             repair_used=repair_used,
             extractor_used=extractor_used,
             code_answers=code_answers,
@@ -540,6 +611,45 @@ class AIMO3Solver:
         if not code_answers and not sandbox_errors:
             pieces.append("No executable code evidence was found.")
         return "\n".join(pieces)
+
+    def _should_continue_agent_loop(
+        self,
+        *,
+        answer: int | None,
+        answer_source: str,
+        code_blocks_in_response: int,
+    ) -> bool:
+        if self.config.agentic_tool_rounds <= 0:
+            return False
+        if code_blocks_in_response <= 0:
+            return False
+        if answer is None:
+            return True
+        # Continue when answer confidence is weak and code context exists.
+        return answer_source not in {"final_answer_tag", "boxed", "verifier", "selector"}
+
+    def _build_agent_observation(
+        self,
+        *,
+        round_index: int,
+        previous_response: str,
+        code_answers: list[int],
+        sandbox_errors: list[str],
+    ) -> str:
+        response_tail = self._trim_for_prompt(
+            previous_response,
+            max_chars=max(300, self.config.agentic_observation_chars),
+        )
+        lines = [f"Round {round_index + 1} tool summary:"]
+        if code_answers:
+            lines.append(f"- Parsed integers from python stdout: {code_answers[:6]}")
+        else:
+            lines.append("- No integer parsed from python stdout.")
+        if sandbox_errors:
+            lines.append(f"- Sandbox errors: {sandbox_errors[:3]}")
+        lines.append("Previous response tail:")
+        lines.append(response_tail)
+        return "\n".join(lines)
 
     def _parse_tail_answer_integer(self, text: str, *, modulus: int | None) -> int | None:
         tail = "\n".join(text.splitlines()[-6:])
@@ -1282,6 +1392,7 @@ class AIMO3Solver:
 
         support = len(matching)
         verified = sum(1 for c in matching if c.code_verified)
+        agent_rounds = sum(c.agent_rounds for c in matching)
         verifier_votes = sum(1 for c in matching if c.stage == "verifier")
         audit_votes = sum(1 for c in matching if c.stage == "consistency_audit")
         probe_votes = sum(1 for c in matching if c.stage == "adversarial_probe")
@@ -1303,7 +1414,8 @@ class AIMO3Solver:
         stats = (
             f"support={support} code_verified={verified} "
             f"verifier_votes={verifier_votes} audit_votes={audit_votes} "
-            f"probe_votes={probe_votes} selector_votes={selector_votes} max_score={max_score:.2f}"
+            f"probe_votes={probe_votes} selector_votes={selector_votes} "
+            f"agent_rounds={agent_rounds} max_score={max_score:.2f}"
         )
         return stats + "\n" + "\n".join(snippets)
 

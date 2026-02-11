@@ -29,6 +29,32 @@ class SolverTests(unittest.TestCase):
         result = solver.solve("Find x modulo 100000", problem_id=1)
         self.assertEqual(result.predicted_answer, 42)
 
+    def test_solver_agentic_tool_round_uses_sandbox_observation(self) -> None:
+        responses = [
+            "Let's compute.\n```python\nprint(42)\n```",
+            "From tool output, the value is FINAL_ANSWER: 42",
+        ]
+        client = DummyClient(responses)
+        cfg = SolverConfig(
+            attempts=1,
+            temperatures=(0.2,),
+            early_stop_attempt=99,
+            agentic_tool_rounds=1,
+            final_extractor_passes=0,
+            verification_attempts=0,
+            consistency_audit_attempts=0,
+            geometry_recheck_attempts=0,
+            selector_attempts=0,
+            sparse_recovery_attempts=0,
+            small_answer_guard_attempts=0,
+            fallback_guess_attempts=0,
+        )
+        solver = AIMO3Solver(client, config=cfg)
+
+        result = solver.solve("Compute final value.", problem_id=101)
+        self.assertEqual(result.predicted_answer, 42)
+        self.assertEqual(result.debug_summary["agentic_candidates"], 1)
+
     def test_solver_selector_stage_influences_final_pick(self) -> None:
         responses = [
             "Reasoning. FINAL_ANSWER: 10",

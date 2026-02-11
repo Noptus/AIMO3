@@ -45,6 +45,8 @@ def _add_solver_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--early-stop-ratio", type=float, default=0.8)
     parser.add_argument("--early-stop-attempt", type=int, default=4)
     parser.add_argument("--max-code-blocks-per-attempt", type=int, default=2)
+    parser.add_argument("--agentic-tool-rounds", type=int, default=1)
+    parser.add_argument("--agentic-observation-chars", type=int, default=1200)
     parser.add_argument("--default-answer", type=int, default=0)
 
     parser.add_argument("--adaptive-complexity", action="store_true", default=True)
@@ -100,6 +102,8 @@ def _profile_overrides(args: argparse.Namespace) -> dict[str, int | bool | float
             "attempts": min(args.attempts, 2),
             "max_tokens": min(args.max_tokens, 384),
             "hard_mode": False,
+            "agentic_tool_rounds": min(args.agentic_tool_rounds, 1),
+            "agentic_observation_chars": min(args.agentic_observation_chars, 800),
             "repair_passes": 0,
             "final_extractor_passes": 1,
             "final_extractor_max_tokens": min(args.final_extractor_max_tokens, 128),
@@ -122,6 +126,8 @@ def _profile_overrides(args: argparse.Namespace) -> dict[str, int | bool | float
             "attempts": max(args.attempts, 12),
             "max_tokens": max(args.max_tokens, 4096),
             "max_code_blocks_per_attempt": max(args.max_code_blocks_per_attempt, 4),
+            "agentic_tool_rounds": max(args.agentic_tool_rounds, 2),
+            "agentic_observation_chars": max(args.agentic_observation_chars, 1200),
             "hard_mode": True,
             "hard_attempts": max(args.hard_attempts, 12),
             "hard_max_tokens": max(args.hard_max_tokens, 4096),
@@ -158,6 +164,8 @@ def _profile_overrides(args: argparse.Namespace) -> dict[str, int | bool | float
             "attempts": max(args.attempts, 8),
             "max_tokens": max(args.max_tokens, 4096),
             "max_code_blocks_per_attempt": max(args.max_code_blocks_per_attempt, 4),
+            "agentic_tool_rounds": max(args.agentic_tool_rounds, 2),
+            "agentic_observation_chars": max(args.agentic_observation_chars, 1400),
             "hard_mode": True,
             "hard_attempts": max(args.hard_attempts, 12),
             "hard_max_tokens": max(args.hard_max_tokens, 4096),
@@ -252,6 +260,8 @@ def _build_solver_from_args(args: argparse.Namespace) -> AIMO3Solver:
         early_stop_ratio=float(value("early_stop_ratio")),
         early_stop_attempt=args.early_stop_attempt,
         max_code_blocks_per_attempt=int(value("max_code_blocks_per_attempt")),
+        agentic_tool_rounds=int(value("agentic_tool_rounds")),
+        agentic_observation_chars=int(value("agentic_observation_chars")),
         default_answer=args.default_answer,
         adaptive_complexity=bool(value("adaptive_complexity")),
         hard_mode=bool(value("hard_mode")),

@@ -73,6 +73,8 @@ benchmark-reference-groq-120b-max:
 		--reasoning-effort high \
 		--attempts 8 \
 		--max-tokens 4096 \
+		--agentic-tool-rounds 2 \
+		--agentic-observation-chars 1400 \
 		--repair-passes 1 \
 		--final-extractor-passes 2 \
 		--verification-attempts 3 \
@@ -107,6 +109,7 @@ kaggle-submit-120b:
 		--profile aimo120b \
 		--model openai/gpt-oss-120b \
 		--reasoning-effort high \
+		--agentic-tool-rounds 2 \
 		--request-timeout 300 \
 		--client-max-retries 1 \
 		--wait

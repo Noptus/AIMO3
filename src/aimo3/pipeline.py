@@ -52,6 +52,7 @@ def run_inference(
                         "archetype": c.archetype,
                         "complexity": c.complexity,
                         "code_verified": c.code_verified,
+                        "agent_rounds": c.agent_rounds,
                         "repair_used": c.repair_used,
                         "extractor_used": c.extractor_used,
                         "code_answers": c.code_answers,

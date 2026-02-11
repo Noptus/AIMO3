@@ -1,88 +1,88 @@
-# AIMO3 Forward Roadmap (TODO)
+# AIMO3 Next Roadmap (Top 10 Feasible Ideas)
 
 Date: 2026-02-11
 
-## Completed today (2026-02-11)
+This list is ranked by expected score impact per implementation effort.
 
-- [x] Added contradiction-focused strategy stages (`consistency_audit`, `adversarial_probe`) and wired them into aggregation/ranking.
-- [x] Strengthened anti-collapse safeguards (`small_answer_guard`, fallback behavior tuning).
-- [x] Improved modulus parsing coverage for LaTeX-style expressions (`$10^{5}$`, `$5^7$`, `$99991$`).
-- [x] Tightened extractor prompt contract and answer-line parsing to reduce false positives.
-- [x] Added regression tests for new parsing and solver-stage behavior.
-- [x] Synced Kaggle kernel mirror code with latest solver/prompt/parsing pipeline.
+## 1) Two-model disagreement escalation
 
-## P0 - Highest expected score impact
+- Impact: High
+- Effort: Medium
+- Feasible because: pipeline already supports model/config switching.
+- Plan: run 20B first, escalate only disagreement/low-confidence items to 120B.
 
-- [ ] Add a two-model ensemble pipeline (`openai/gpt-oss-120b` + fast 20B/32B) with disagreement-triggered escalation.
-  - Why: boosts robustness on edge cases where one model mode collapses.
-  - Deliverable: weighted answer fusion with per-model confidence calibration.
+## 2) Per-problem dynamic compute allocator
 
-- [ ] Implement per-problem dynamic compute allocator with a global runtime budget.
-  - Why: shift tokens/attempts from easy problems to hard geometry/number theory outliers.
-  - Deliverable: budget manager with `easy/medium/hard` runtime caps and banked time.
+- Impact: High
+- Effort: Medium
+- Feasible because: solver already has complexity profile and stage controls.
+- Plan: budget manager with easy/medium/hard caps + banked unused time.
 
-- [ ] Add candidate-level verifier scoring using structured rubric outputs.
-  - Why: current selector uses free-form rationale; structured rubric is easier to tune.
-  - Deliverable: verifier emits JSON fields (`validity`, `consistency`, `tool_support`, `penalties`).
+## 3) Structured selector rubric (JSON)
 
-- [ ] Add symbolic-geometry helper tools in sandbox (SymPy geometry checks + invariant templates).
-  - Why: geometry remains a high-variance category.
-  - Deliverable: reusable geometry utility module used by code-first attempts.
+- Impact: High
+- Effort: Medium
+- Feasible because: selector stage already exists.
+- Plan: selector emits rubric fields (`validity`, `tool_support`, `contradictions`, `confidence`) used in aggregation.
 
-## P1 - Reliability + extraction robustness
+## 4) Confidence-aware modulus parser
 
-- [ ] Expand extraction hardening to full adversarial suite.
-  - Status: base hardening shipped (stricter answer-line hints, extractor prompt tightening, fallback guard improvements).
-  - Remaining deliverable: parser tests for 50+ adversarial output patterns and malformed tool-call outputs.
+- Impact: Medium-High
+- Effort: Low-Medium
+- Feasible because: parser and debug summary already centralized.
+- Plan: multi-pattern vote with confidence score and fallback alert when ambiguous.
 
-- [ ] Add modulus confidence scoring and multi-pass consistency vote.
-  - Status: modulus parsing coverage improved for common AIMO3 formats.
-  - Remaining deliverable: confidence score + warning flag in debug artifacts.
+## 5) Agent loop checkpointing/replay
 
-- [ ] Add API fault-tolerance strategy for long runs.
-  - Deliverable: jittered retries, per-problem checkpointing, restart-from-checkpoint CLI.
+- Impact: Medium-High
+- Effort: Medium
+- Feasible because: agentic rounds are now explicit in solver.
+- Plan: persist per-problem stage trace and allow resume after API/runtime failure.
 
-- [ ] Add run manifest and deterministic seed logging.
-  - Deliverable: `artifacts/<run_id>/manifest.json` with model, prompts, params, git SHA.
+## 6) Geometry utility pack in sandbox
 
-## P1 - Data + offline evaluation
+- Impact: Medium-High
+- Effort: Medium
+- Feasible because: sandbox execution and geometry stage already wired.
+- Plan: add reusable helpers for similarity/power-of-point/radical-axis checks.
 
-- [ ] Build a local benchmark pack from reference + curated public AIME-style tasks.
-  - Deliverable: `data/benchmarks/*.csv` + script to compute per-category score deltas.
+## 7) Targeted extraction stress-suite (50+ adversarial cases)
 
-- [ ] Add ablation runner for prompt/selector/verification toggles.
-  - Deliverable: one command producing a markdown report with win/loss table.
+- Impact: Medium
+- Effort: Low-Medium
+- Feasible because: parsing tests already present.
+- Plan: add malformed-final-line, tool-output, and truncation fixtures.
 
-- [ ] Add error taxonomy tagging (parse failure, wrong modulus, reasoning drift, tool failure).
-  - Deliverable: post-run analysis notebook and summary CSV.
+## 8) Stage ablation harness + markdown report
 
-## P2 - Engineering quality and maintainability
+- Impact: Medium
+- Effort: Medium
+- Feasible because: CLI has stage toggles for all major components.
+- Plan: one command to run A/B/C configs and output per-category deltas.
 
-- [ ] Split solver into stage modules (`attempt`, `repair`, `verify`, `geometry_recheck`, `selector`, `aggregate`).
-  - Deliverable: lower-complexity code and easier experimentation.
+## 9) Submission confidence gate
 
-- [ ] Add typed config schema and profile registry.
-  - Deliverable: `profiles.yaml` + loader + CLI validation.
+- Impact: Medium
+- Effort: Low
+- Feasible because: debug summary already captures support features.
+- Plan: block/flag submissions when too many answers come from fallback-only or unsupported tiny values.
 
-- [ ] Add integration tests with mocked chat backend and flaky network simulation.
-  - Deliverable: CI job that validates retry/recovery behavior.
+## 10) Lightweight local benchmark expansion
 
-- [ ] Add precomputed prompt snapshots for regression checks.
-  - Deliverable: tests asserting critical prompt invariants by archetype.
+- Impact: Medium
+- Effort: Medium
+- Feasible because: reference pipeline and scripts exist.
+- Plan: build additional labeled AIME-style pack for offline tuning of weights/stages.
 
-## P2 - Kaggle operations
+## Immediate next 3 experiments
 
-- [ ] Build dedicated competition notebook template that reads Kaggle secrets natively.
-  - Deliverable: `notebooks/kaggle_submission_template.ipynb` + auto-pack script.
+1. A/B: `selector+audit` vs `selector+audit+adversarial_probe` on full reference.
+2. A/B: `agentic_tool_rounds=1` vs `2` under equal token/time budgets.
+3. A/B: dynamic escalation (20B->120B) vs pure 120B on same subset.
 
-- [ ] Add one-command kernel pack/push/status script.
-  - Deliverable: `scripts/kaggle_kernel_push.sh` with version tagging and log retrieval.
+## Completed today
 
-- [ ] Add submission policy guardrails (daily quota, max pending submissions, confidence threshold).
-  - Deliverable: submit gate in CLI before pushing low-confidence outputs.
-
-## Immediate experiment backlog (next 3 runs)
-
-- [ ] Run A/B: selector+audit vs selector+audit+adversarial_probe on full reference.
-- [ ] Run A/B: geometry recheck `attempts=2` vs `attempts=4` with fixed budgets.
-- [ ] Run A/B: aggressive high-temp tail (`0.7, 0.85`) only on unresolved problems after stage-1 consensus.
+- Added bounded agentic tool loop in solver (python sandbox observations fed back to model).
+- Hardened parsing for LaTeX modulus and stricter answer extraction behavior.
+- Added contradiction-focused stages and stronger aggregation heuristics.
+- Hardened Kaggle notebook output validation for required `submission.parquet`.

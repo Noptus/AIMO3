@@ -79,6 +79,11 @@ Return only one line in this format: FINAL_ANSWER: <integer>
 No extra text.
 """
 
+AGENT_FOLLOWUP_SYSTEM_PROMPT = """You are an olympiad math agent using a Python sandbox.
+You are given tool observations from executed Python code.
+Continue from those observations and end with: FINAL_ANSWER: <integer>
+"""
+
 STYLE_GUIDE = {
     "algebra": "Prioritize symbolic simplification, invariants, and exact substitutions.",
     "number_theory": "Prioritize modular arithmetic, valuations, divisor structure, and parity.",
@@ -360,6 +365,47 @@ Final line must be exactly: FINAL_ANSWER: <integer>
 """
 
     return PromptBundle(system=REPAIR_SYSTEM_PROMPT, user=user)
+
+
+def build_agent_followup_prompt(
+    problem_text: str,
+    *,
+    previous_response: str,
+    tool_observation: str,
+    modulus: int | None,
+    profile: ProblemProfile,
+    round_index: int,
+) -> PromptBundle:
+    """Prompt for iterative agentic follow-up after sandbox execution."""
+
+    modulus_hint = (
+        f"Normalize the final answer modulo {modulus}."
+        if modulus is not None
+        else "Infer and apply the correct modulus from the statement."
+    )
+
+    user = f"""Agent follow-up round {round_index + 1}
+Category: {profile.category}
+Archetype: {profile.archetype}
+Complexity: {profile.complexity}
+{modulus_hint}
+
+Problem:
+{problem_text}
+
+Previous model output:
+{previous_response}
+
+Python sandbox observations:
+{tool_observation}
+
+Rules:
+- Use the observations to refine or correct the solution.
+- If needed, emit one compact python block for one additional check.
+- End with exactly one line: FINAL_ANSWER: <integer>
+"""
+
+    return PromptBundle(system=AGENT_FOLLOWUP_SYSTEM_PROMPT, user=user)
 
 
 def build_verifier_prompt(
