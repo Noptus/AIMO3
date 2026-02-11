@@ -1,4 +1,4 @@
-# AIMO3 - First High-Quality Baseline
+# AIMO3
 
 Composable baseline for the Kaggle competition `ai-mathematical-olympiad-progress-prize-3` with:
 
