@@ -38,6 +38,7 @@ Composable baseline for the Kaggle competition `ai-mathematical-olympiad-progres
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
+python -m pip install --upgrade pip setuptools wheel
 pip install -e .
 cp .env.example .env
 ```
@@ -48,9 +49,12 @@ Set environment values in `.env`:
 AIMO_BASE_URL=http://127.0.0.1:8000/v1
 AIMO_MODEL=openai/gpt-oss-120b
 AIMO_API_KEY=
+GROQ_API_KEY=
 KAGGLE_USERNAME=...
 KAGGLE_KEY=...
 ```
+
+If `GROQ_API_KEY` is set and `AIMO_BASE_URL` is not set, the CLI automatically targets `https://api.groq.com/openai/v1`.
 
 ## Baseline usage
 
@@ -62,6 +66,19 @@ aimo3 solve \
   --output-csv artifacts/submission.csv \
   --debug-json artifacts/debug_traces.json \
   --attempts 8
+```
+
+Low-cost smoke test on hosted API:
+
+```bash
+aimo3 solve \
+  --input-csv examples/sample_problems.csv \
+  --output-csv artifacts/submission.csv \
+  --debug-json artifacts/debug_traces.json \
+  --attempts 1 \
+  --max-tokens 256 \
+  --temperatures 0.2 \
+  --reasoning-effort low
 ```
 
 ### 2) Submit CSV to Kaggle and wait for score
@@ -91,6 +108,7 @@ Equivalent shortcuts are available through `Makefile`:
 ```bash
 make test
 make solve-sample
+make solve-groq-cheap
 make kaggle-download
 make kaggle-submit
 ```
@@ -142,3 +160,12 @@ Recommended next iteration steps:
 2. increase attempt budget on hard-problem detector only
 3. calibrate answer weighting from offline validation (AIME/HMMT-like set)
 4. add stronger modulus disambiguation pass for edge-format statements
+
+## Cheapest way to run now
+
+For very low spend while validating pipeline plumbing:
+
+1. use `openai/gpt-oss-20b` for broad sweeps
+2. set `--attempts 1` and `--max-tokens 256`
+3. keep `--reasoning-effort low`
+4. rerun only uncertain/hard problems with `openai/gpt-oss-120b`

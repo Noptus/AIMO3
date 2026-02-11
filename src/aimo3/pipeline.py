@@ -44,10 +44,14 @@ def run_inference(
                 "candidates": [
                     {
                         "attempt": c.attempt,
+                        "stage": c.stage,
                         "temperature": c.temperature,
                         "answer": c.answer,
                         "answer_source": c.answer_source,
+                        "category": c.category,
+                        "complexity": c.complexity,
                         "code_verified": c.code_verified,
+                        "repair_used": c.repair_used,
                         "code_answers": c.code_answers,
                         "sandbox_errors": c.sandbox_errors,
                         "generation_error": c.generation_error,

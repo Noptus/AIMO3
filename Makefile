@@ -1,6 +1,6 @@
 PYTHON ?= python3
 
-.PHONY: install test solve-sample kaggle-download kaggle-submit kaggle-pipeline
+.PHONY: install test solve-sample solve-groq-cheap kaggle-download kaggle-submit kaggle-pipeline
 
 install:
 	$(PYTHON) -m pip install -e .
@@ -13,6 +13,18 @@ solve-sample:
 		--input-csv examples/sample_problems.csv \
 		--output-csv artifacts/submission.csv \
 		--debug-json artifacts/debug_traces.json
+
+solve-groq-cheap:
+	PYTHONPATH=src $(PYTHON) -m aimo3.cli solve \
+		--input-csv examples/sample_problems.csv \
+		--output-csv artifacts/submission_groq_cheap.csv \
+		--debug-json artifacts/debug_groq_cheap.json \
+		--model openai/gpt-oss-20b \
+		--attempts 1 \
+		--max-tokens 256 \
+		--temperatures 0.2 \
+		--reasoning-effort low \
+		--top-p 0.9
 
 kaggle-download:
 	PYTHONPATH=src $(PYTHON) -m aimo3.cli kaggle-download \
