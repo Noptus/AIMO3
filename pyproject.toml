@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aimo3"
+version = "0.1.0"
+description = "Composable AIMO3 baseline with tool-integrated reasoning and Kaggle API automation"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+  "requests>=2.32.3",
+  "pandas>=2.2.2",
+  "python-dotenv>=1.0.1",
+  "kaggle>=1.7.4",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.3.0",
+  "ruff>=0.6.0",
+]
+
+[project.scripts]
+aimo3 = "aimo3.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

@@ -1,3 +1,17 @@
+Metadata-Version: 2.4
+Name: aimo3
+Version: 0.1.0
+Summary: Composable AIMO3 baseline with tool-integrated reasoning and Kaggle API automation
+Requires-Python: >=3.9
+Description-Content-Type: text/markdown
+Requires-Dist: requests>=2.32.3
+Requires-Dist: pandas>=2.2.2
+Requires-Dist: python-dotenv>=1.0.1
+Requires-Dist: kaggle>=1.7.4
+Provides-Extra: dev
+Requires-Dist: pytest>=8.3.0; extra == "dev"
+Requires-Dist: ruff>=0.6.0; extra == "dev"
+
 # AIMO3 - First High-Quality Baseline
 
 Composable baseline for the Kaggle competition `ai-mathematical-olympiad-progress-prize-3` with:
