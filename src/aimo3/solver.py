@@ -43,6 +43,8 @@ class SolverConfig:
     max_code_blocks_per_attempt: int = 2
     agentic_tool_rounds: int = 1
     agentic_observation_chars: int = 1200
+    agentic_stateful_python: bool = True
+    agentic_state_chars: int = 20_000
     default_answer: int = 0
 
     # Hard-problem behavior.
@@ -422,16 +424,21 @@ class AIMO3Solver:
         code_answers: list[int] = []
         sandbox_errors: list[str] = []
         code_blocks_count = 0
+        python_state = ""
         answer: int | None = None
         answer_source = "none"
         parsed = parse_answer_from_text(response_text, modulus=modulus)
         agent_rounds_used = 0
 
         def refresh_from_response(text: str) -> tuple[list[int], list[str], int]:
-            nonlocal answer, answer_source, code_blocks_count, parsed
+            nonlocal answer, answer_source, code_blocks_count, parsed, python_state
             parsed = parse_answer_from_text(text, modulus=modulus)
             phase_answer = parsed.answer
-            phase_answers, phase_errors, phase_blocks = self._evaluate_code_blocks(text, modulus)
+            phase_answers, phase_errors, phase_blocks, python_state = self._evaluate_code_blocks(
+                text,
+                modulus,
+                stateful_prefix=python_state,
+            )
             code_answers.extend(phase_answers)
             sandbox_errors.extend(phase_errors)
             code_blocks_count += phase_blocks
@@ -513,7 +520,11 @@ class AIMO3Solver:
             parsed = parse_answer_from_text(response_text, modulus=modulus)
             answer = parsed.answer
             answer_source = parsed.source
-            extra_answers, extra_errors, extra_code_blocks = self._evaluate_code_blocks(response_text, modulus)
+            extra_answers, extra_errors, extra_code_blocks, python_state = self._evaluate_code_blocks(
+                response_text,
+                modulus,
+                stateful_prefix=python_state,
+            )
             code_answers.extend(extra_answers)
             sandbox_errors.extend(extra_errors)
             code_blocks_count += extra_code_blocks
@@ -574,21 +585,31 @@ class AIMO3Solver:
         self,
         response_text: str,
         modulus: int | None,
-    ) -> tuple[list[int], list[str], int]:
+        *,
+        stateful_prefix: str = "",
+    ) -> tuple[list[int], list[str], int, str]:
         code_answers: list[int] = []
         sandbox_errors: list[str] = []
         code_blocks = extract_python_blocks(response_text)
+        prefix = stateful_prefix if self.config.agentic_stateful_python else ""
 
         for block in code_blocks[: self.config.max_code_blocks_per_attempt]:
-            run = execute_python(block, policy=self.sandbox_policy)
+            executable = block
+            if prefix:
+                executable = prefix + "\n\n" + block
+            run = execute_python(executable, policy=self.sandbox_policy)
             if run.success:
                 code_answer = parse_integer_from_stdout(run.stdout, modulus=modulus)
                 if code_answer is not None:
                     code_answers.append(code_answer)
+                if self.config.agentic_stateful_python:
+                    prefix = (prefix + "\n\n" + block).strip() if prefix else block
+                    if len(prefix) > self.config.agentic_state_chars:
+                        prefix = prefix[-self.config.agentic_state_chars :]
             elif run.error:
                 sandbox_errors.append(run.error)
 
-        return code_answers, sandbox_errors, len(code_blocks)
+        return code_answers, sandbox_errors, len(code_blocks), prefix
 
     def _needs_repair(self, answer: int | None, code_answers: list[int]) -> bool:
         if answer is None:
@@ -621,10 +642,10 @@ class AIMO3Solver:
     ) -> bool:
         if self.config.agentic_tool_rounds <= 0:
             return False
-        if code_blocks_in_response <= 0:
-            return False
         if answer is None:
             return True
+        if code_blocks_in_response <= 0 and answer_source in {"final_answer_tag", "boxed"}:
+            return False
         # Continue when answer confidence is weak and code context exists.
         return answer_source not in {"final_answer_tag", "boxed", "verifier", "selector"}
 

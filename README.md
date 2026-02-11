@@ -1,74 +1,81 @@
 # AIMO3
 
-Composable Kaggle solver framework for `ai-mathematical-olympiad-progress-prize-3` with:
+AIMO3 is a production-oriented, agentic math-solving system for Kaggle competition `ai-mathematical-olympiad-progress-prize-3`.
 
-- multi-attempt LLM solving (`gpt-oss-120b` first, any OpenAI-compatible endpoint)
-- agentic Python-sandbox execution loop (model -> code -> sandbox output -> model follow-up)
-- stage-based arbitration (`verification`, `consistency_audit`, `adversarial_probe`, `geometry_recheck`, `selector`)
-- anti-collapse guards for trivial outputs (`0/1` penalties + dedicated guard stages)
-- Kaggle automation for competition files, notebook packaging, and submission plumbing
+## What This Repo Does
 
-## Is The LLM Agentic Right Now?
+- Solves each problem with multiple diversified `gpt-oss` attempts.
+- Runs an autonomous Python sandbox loop inside each attempt.
+- Uses cross-stage arbitration (verifier, consistency audit, adversarial probe, geometry recheck, selector).
+- Applies anti-collapse safeguards for weak `0/1` behavior.
+- Produces Kaggle-ready outputs and automates Kaggle workflows.
 
-Yes, partially and explicitly.
+## Is It Fully Agentic Right Now?
 
-Current solver behavior (`src/aimo3/solver.py`):
+Yes, within controlled limits.
 
-1. model generates a candidate solution
-2. fenced Python code blocks are extracted and executed in the local sandbox
-3. solver builds tool observations from stdout/errors
-4. model receives a follow-up prompt with those observations (`agentic_tool_rounds`)
-5. final answer is aggregated with additional verifier/recheck/selector stages
+Current solver (`/Users/raphaelcaillon/Documents/GitHub/AIMO3/src/aimo3/solver.py`) runs a bounded autonomous loop:
 
-This is a practical agent loop with bounded tool rounds. It is not an unrestricted autonomous tool planner; it is a controlled math-solver agent with sandboxed Python execution.
+1. Model drafts solution and emits python blocks.
+2. Sandbox executes code.
+3. Tool observations (stdout/errors) are fed back to the model.
+4. Model continues reasoning and may emit more code.
+5. Loop repeats for configurable rounds.
 
-## Core Architecture
+Agentic capabilities now include:
 
-- `src/aimo3/prompts.py`
-  - problem classification + archetype routing
-  - base solve prompt + specialist prompts (repair, verification, selector, adversarial probe, extractor)
-- `src/aimo3/sandbox.py`
-  - constrained Python execution for tool-integrated reasoning
-- `src/aimo3/solver.py`
-  - multi-attempt orchestration
-  - agentic tool rounds
-  - stage pipeline and weighted aggregation
-- `src/aimo3/parsing.py`
-  - modulus extraction (including LaTeX forms like `$10^{5}$`, `$5^7$`, `$99991$`)
-  - robust final answer extraction
-- `src/aimo3/cli.py`
-  - end-to-end commands for solve, benchmark, and Kaggle operations
-- `kaggle_kernel_submission/`
-  - notebook package used for competition kernel execution (internet disabled mode)
+- iterative tool-use rounds (`--agentic-tool-rounds`)
+- stateful python context across rounds (`--agentic-stateful-python`)
+- persistent code state budget (`--agentic-state-chars`)
+- bounded observation context (`--agentic-observation-chars`)
 
-## Solver Stage Pipeline
+This is a bounded autonomous agent machine, not an unbounded open-ended planner.
 
-Per problem, the current default flow is:
+## Core Components
 
-1. `initial` diversified attempts (proof-first/code-first mix)
-2. bounded agentic tool follow-up rounds (`--agentic-tool-rounds`)
-3. optional repair pass
-4. optional strict extractor pass
-5. optional verification arbitration
-6. sparse-recovery attempts when evidence is too thin
-7. consistency audit stage
-8. adversarial probe stage
-9. geometry recheck stage (geometry only)
-10. small-answer guard stage
-11. selector stage
-12. fallback guess (last resort)
+- `/Users/raphaelcaillon/Documents/GitHub/AIMO3/src/aimo3/solver.py`: orchestration, agent loop, stage pipeline, aggregation.
+- `/Users/raphaelcaillon/Documents/GitHub/AIMO3/src/aimo3/sandbox.py`: constrained Python execution.
+- `/Users/raphaelcaillon/Documents/GitHub/AIMO3/src/aimo3/prompts.py`: archetype routing + stage prompt builders.
+- `/Users/raphaelcaillon/Documents/GitHub/AIMO3/src/aimo3/parsing.py`: modulus/answer extraction.
+- `/Users/raphaelcaillon/Documents/GitHub/AIMO3/src/aimo3/cli.py`: solve, benchmark, Kaggle automation.
+- `/Users/raphaelcaillon/Documents/GitHub/AIMO3/kaggle_kernel_submission/`: offline competition notebook package.
 
-Final aggregation rewards:
+## Solver Pipeline
 
-- code-verified traces
-- cross-stage agreement/diversity
-- verifier/audit/probe/selector support
+Per problem:
 
-And penalizes:
+1. Initial diversified attempts.
+2. Agentic sandbox rounds per attempt.
+3. Repair/extractor recovery (if needed).
+4. Verification.
+5. Sparse recovery.
+6. Consistency audit.
+7. Adversarial probe.
+8. Geometry recheck.
+9. Small-answer guard.
+10. Selector.
+11. Fallback guess.
+12. Weighted final aggregation.
 
-- weak tiny answers
+Aggregation boosts:
+
+- code-verified support
+- multi-stage consensus/diversity
+- verifier/audit/probe/selector confirmations
+
+Aggregation penalties:
+
+- unsupported tiny outputs
 - problem-echo numbers
-- unsupported trivial consensus
+- weak fallback-only evidence
+
+## Profiles
+
+- `cheap`: minimal cost smoke checks.
+- `balanced`: practical default.
+- `hard`: strong general high-effort profile.
+- `aimo120b`: tuned 120B high-effort profile.
+- `autonomous120b`: maximum autonomous profile (long runs, deep stage budget, stronger agent loop).
 
 ## Quick Start
 
@@ -80,7 +87,7 @@ pip install -e .
 cp .env.example .env
 ```
 
-Minimal `.env`:
+Recommended `.env`:
 
 ```bash
 AIMO_MODEL=openai/gpt-oss-120b
@@ -92,9 +99,9 @@ KAGGLE_KEY=
 # optional: KAGGLE_API_TOKEN=username:key
 ```
 
-## Main Commands
+## Main Usage
 
-### Solve CSV
+### Solve
 
 ```bash
 aimo3 solve \
@@ -104,105 +111,61 @@ aimo3 solve \
   --profile balanced
 ```
 
-### Benchmark on labeled reference
+### High-Budget Autonomous Reference Run (Groq/Online)
 
 ```bash
 PYTHONPATH=src python -m aimo3.cli benchmark-reference \
   --reference-csv reference/ai-mathematical-olympiad-progress-prize-3/reference.csv \
-  --output-dir artifacts/reference_benchmark \
-  --profile aimo120b \
-  --model openai/gpt-oss-120b \
-  --reasoning-effort high
-```
-
-### Kaggle API (file submission path)
-
-```bash
-aimo3 kaggle-download --competition ai-mathematical-olympiad-progress-prize-3 --output-dir data/raw
-aimo3 kaggle-submit --competition ai-mathematical-olympiad-progress-prize-3 --submission-csv artifacts/submission.csv --wait
-```
-
-### Kaggle notebook push (code competition workflow)
-
-```bash
-kaggle kernels push -p kaggle_kernel_submission
-```
-
-Then choose the pushed notebook version in Kaggle competition UI.
-
-## Profiles And Cost Control
-
-- `cheap`
-  - minimal attempts/tokens, reduced stages
-  - use for wiring checks
-- `balanced`
-  - practical default
-- `hard`
-  - stronger stage budget and verification
-- `aimo120b`
-  - maximum practical 120B configuration in this repo
-
-Recommended low-cost iteration:
-
-1. run `openai/gpt-oss-20b` on full set
-2. rerun uncertain/hard slice with `openai/gpt-oss-120b`
-3. submit best merged result
-
-## Agentic Controls
-
-New/important knobs:
-
-- `--agentic-tool-rounds` (default `1`)
-- `--agentic-observation-chars` (default `1200`)
-- `--max-code-blocks-per-attempt`
-- `--repair-passes`
-- `--final-extractor-passes`
-- `--consistency-audit-attempts`
-- `--adversarial-probe-attempts`
-- `--selector-attempts`
-
-Example (high effort):
-
-```bash
-PYTHONPATH=src python -m aimo3.cli benchmark-reference \
-  --reference-csv reference/ai-mathematical-olympiad-progress-prize-3/reference.csv \
-  --output-dir artifacts/reference_benchmark_120b_robust \
-  --profile aimo120b \
+  --output-dir artifacts/reference_benchmark_autonomous120b \
+  --profile autonomous120b \
   --model openai/gpt-oss-120b \
   --reasoning-effort high \
-  --agentic-tool-rounds 2 \
-  --max-code-blocks-per-attempt 4 \
-  --consistency-audit-attempts 2 \
-  --adversarial-probe-attempts 2 \
-  --geometry-recheck-attempts 2 \
-  --selector-attempts 2 \
-  --request-timeout 300
+  --request-timeout 420 \
+  --client-max-retries 2
 ```
 
-## Kaggle Notebook Constraints
+### Full Competition Pipeline
 
-Competition notebook constraints matter:
+```bash
+PYTHONPATH=src python -m aimo3.cli kaggle-pipeline \
+  --competition ai-mathematical-olympiad-progress-prize-3 \
+  --input-csv data/raw/test.csv \
+  --output-csv artifacts/submission_autonomous120b.csv \
+  --debug-json artifacts/debug_autonomous120b.json \
+  --profile autonomous120b \
+  --model openai/gpt-oss-120b \
+  --reasoning-effort high \
+  --request-timeout 420 \
+  --client-max-retries 2 \
+  --wait
+```
 
-- internet disabled during scoring
-- required output filename: `submission.parquet`
-- output must exist in `/kaggle/working`
+## Critical Agent Controls
 
-Notebook in `kaggle_kernel_submission/aimo3_submission.ipynb` is hardened to:
+- `--agentic-tool-rounds`
+- `--agentic-observation-chars`
+- `--agentic-stateful-python` / `--no-agentic-stateful-python`
+- `--agentic-state-chars`
+- `--max-code-blocks-per-attempt`
+
+## Kaggle Notebook Notes
+
+The competition notebook in `/Users/raphaelcaillon/Documents/GitHub/AIMO3/kaggle_kernel_submission/aimo3_submission.ipynb` is hardened to:
 
 - always write `/kaggle/working/submission.parquet`
-- validate parquet existence, schema, and row count
-- emit clear logs for output discovery
+- validate output file existence, schema, and row count
+- run with internet disabled mode for scoring compatibility
 
-## Interpreting Common Kaggle Logs
+If Kaggle says parquet is missing, ensure you select the latest notebook version that logs `Saved required output: /kaggle/working/submission.parquet`.
 
-Warnings like these are usually non-blocking:
+## Common Log Warnings (Non-blocking)
 
-- debugger frozen module warning
+These usually do not indicate failure:
+
+- frozen modules debugger warning
 - `mistune` / `nbconvert` syntax/future warnings
 
-Blocking issue is typically only:
-
-- missing or invalid `submission.parquet`
+Blocking issue is typically only missing/invalid `submission.parquet`.
 
 ## Development
 
@@ -213,18 +176,10 @@ make test
 make check
 ```
 
-CI and standards:
+## Limitation To Keep In Mind
 
-- `.github/workflows/ci.yml`
-- `CONTRIBUTING.md`
-- `SECURITY.md`
-
-## Current Limitations
-
-- Hosted API usage is unavailable in official offline Kaggle scoring runs.
-- True top-tier competition performance requires robust offline in-notebook inference stack (local model weights/runtime), not only API-mode orchestration.
-- Agent loop is intentionally bounded for reliability and runtime control.
+Online API mode (Groq/OpenAI) is excellent for development and external runs, but Kaggle competition scoring notebooks run offline. For leaderboard-maximal offline performance, a local in-notebook model runtime is still required.
 
 ## License
 
-MIT (`LICENSE`).
+MIT (`/Users/raphaelcaillon/Documents/GitHub/AIMO3/LICENSE`).

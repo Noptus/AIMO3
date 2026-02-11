@@ -1,88 +1,79 @@
-# AIMO3 Next Roadmap (Top 10 Feasible Ideas)
+# AIMO3 High-Impact Roadmap (Top 10 Feasible Upgrades)
 
 Date: 2026-02-11
 
-This list is ranked by expected score impact per implementation effort.
+Goal: improve solved-count under realistic runtime and cost constraints.
 
-## 1) Two-model disagreement escalation
+## 1) Two-pass model cascade (20B -> 120B escalation)
 
-- Impact: High
-- Effort: Medium
-- Feasible because: pipeline already supports model/config switching.
-- Plan: run 20B first, escalate only disagreement/low-confidence items to 120B.
+- Why it works: most problems are not equally hard; 120B budget is best spent on uncertain cases.
+- Feasibility: high (existing pipeline already supports model/profile switches).
+- Success metric: same accuracy as pure-120B with >=35% lower token cost, or +1 solved at same cost.
 
-## 2) Per-problem dynamic compute allocator
+## 2) Global runtime budget manager
 
-- Impact: High
-- Effort: Medium
-- Feasible because: solver already has complexity profile and stage controls.
-- Plan: budget manager with easy/medium/hard caps + banked unused time.
+- Why it works: avoids over-spending on easy items and under-spending on hard outliers.
+- Feasibility: high (problem complexity + stage controls already exist).
+- Success metric: +1 to +2 solved on reference with equal wall-clock.
 
-## 3) Structured selector rubric (JSON)
+## 3) Structured selector rubric (JSON output)
 
-- Impact: High
-- Effort: Medium
-- Feasible because: selector stage already exists.
-- Plan: selector emits rubric fields (`validity`, `tool_support`, `contradictions`, `confidence`) used in aggregation.
+- Why it works: deterministic scoring beats free-form selector prose for calibration.
+- Feasibility: medium (selector stage already in place).
+- Success metric: improved stability across reruns; reduced answer churn.
 
-## 4) Confidence-aware modulus parser
+## 4) Modulus confidence and ambiguity handling
 
-- Impact: Medium-High
-- Effort: Low-Medium
-- Feasible because: parser and debug summary already centralized.
-- Plan: multi-pattern vote with confidence score and fallback alert when ambiguous.
+- Why it works: wrong modulus silently corrupts otherwise-correct reasoning.
+- Feasibility: high (parser is centralized and already robust).
+- Success metric: 0 modulus-related regressions on reference/adversarial parser suite.
 
-## 5) Agent loop checkpointing/replay
+## 5) Agent checkpoint/restart and replay
 
-- Impact: Medium-High
-- Effort: Medium
-- Feasible because: agentic rounds are now explicit in solver.
-- Plan: persist per-problem stage trace and allow resume after API/runtime failure.
+- Why it works: long runs fail from API/network timeouts; replay avoids losing progress.
+- Feasibility: medium.
+- Success metric: >=95% completion rate on long 50-problem runs.
 
-## 6) Geometry utility pack in sandbox
+## 6) Geometry micro-toolkit for sandbox
 
-- Impact: Medium-High
-- Effort: Medium
-- Feasible because: sandbox execution and geometry stage already wired.
-- Plan: add reusable helpers for similarity/power-of-point/radical-axis checks.
+- Why it works: geometry remains highest-variance category.
+- Feasibility: medium (sandbox already supports sympy/numpy).
+- Success metric: geometry subset accuracy delta > +10% relative.
 
-## 7) Targeted extraction stress-suite (50+ adversarial cases)
+## 7) Extraction torture-test suite (100 cases)
 
-- Impact: Medium
-- Effort: Low-Medium
-- Feasible because: parsing tests already present.
-- Plan: add malformed-final-line, tool-output, and truncation fixtures.
+- Why it works: truncation and malformed final lines still cause silent defaults.
+- Feasibility: high.
+- Success metric: parse-failure rate cut by at least 50% on stress corpus.
 
-## 8) Stage ablation harness + markdown report
+## 8) Stage-ablation harness with report artifact
 
-- Impact: Medium
-- Effort: Medium
-- Feasible because: CLI has stage toggles for all major components.
-- Plan: one command to run A/B/C configs and output per-category deltas.
+- Why it works: fast iteration needs reliable attribution of what helped.
+- Feasibility: high (CLI already has stage toggles).
+- Success metric: one-command report with per-stage marginal gains.
 
-## 9) Submission confidence gate
+## 9) Submission confidence gate and risk scoring
 
-- Impact: Medium
-- Effort: Low
-- Feasible because: debug summary already captures support features.
-- Plan: block/flag submissions when too many answers come from fallback-only or unsupported tiny values.
+- Why it works: prevents wasting submissions on clearly unstable outputs.
+- Feasibility: high (debug summary already carries evidence signals).
+- Success metric: lower variance and fewer low-confidence submissions.
 
-## 10) Lightweight local benchmark expansion
+## 10) Expanded benchmark pack (AIME-like + failure regressions)
 
-- Impact: Medium
-- Effort: Medium
-- Feasible because: reference pipeline and scripts exist.
-- Plan: build additional labeled AIME-style pack for offline tuning of weights/stages.
+- Why it works: 10-item reference is too small for robust tuning.
+- Feasibility: medium.
+- Success metric: statistically significant config choice over multiple slices.
 
-## Immediate next 3 experiments
+## Immediate Experiments (Next 72h)
 
-1. A/B: `selector+audit` vs `selector+audit+adversarial_probe` on full reference.
-2. A/B: `agentic_tool_rounds=1` vs `2` under equal token/time budgets.
-3. A/B: dynamic escalation (20B->120B) vs pure 120B on same subset.
+1. `aimo120b` vs `autonomous120b` on full reference with fixed randomization.
+2. `agentic_tool_rounds=2` vs `4` with equal token cap.
+3. cascade strategy: `20B-first + 120B escalation` vs pure `120B`.
+4. selector free-form vs selector structured rubric prototype.
 
-## Completed today
+## Implemented Today
 
-- Added bounded agentic tool loop in solver (python sandbox observations fed back to model).
-- Hardened parsing for LaTeX modulus and stricter answer extraction behavior.
-- Added contradiction-focused stages and stronger aggregation heuristics.
-- Hardened Kaggle notebook output validation for required `submission.parquet`.
+- Added bounded autonomous agent loop with iterative tool observation follow-ups.
+- Added stateful Python context across agent rounds.
+- Added `autonomous120b` maximum-budget profile.
+- Updated docs for full execution model and high-budget commands.

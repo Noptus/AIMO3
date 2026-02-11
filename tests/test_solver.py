@@ -55,6 +55,35 @@ class SolverTests(unittest.TestCase):
         self.assertEqual(result.predicted_answer, 42)
         self.assertEqual(result.debug_summary["agentic_candidates"], 1)
 
+    def test_solver_agentic_stateful_python_persists_variables(self) -> None:
+        responses = [
+            "Try code.\n```python\nx = 40\nprint(x)\n```",
+            "Continue with one more check.\n```python\nprint(x + 2)\n```",
+            "Now finalize. FINAL_ANSWER: 42",
+        ]
+        client = DummyClient(responses)
+        cfg = SolverConfig(
+            attempts=1,
+            temperatures=(0.2,),
+            early_stop_attempt=99,
+            agentic_tool_rounds=2,
+            agentic_stateful_python=True,
+            final_extractor_passes=0,
+            verification_attempts=0,
+            consistency_audit_attempts=0,
+            geometry_recheck_attempts=0,
+            selector_attempts=0,
+            sparse_recovery_attempts=0,
+            small_answer_guard_attempts=0,
+            fallback_guess_attempts=0,
+        )
+        solver = AIMO3Solver(client, config=cfg)
+
+        result = solver.solve("Compute final value.", problem_id=102)
+        self.assertEqual(result.predicted_answer, 42)
+        self.assertEqual(result.debug_summary["agentic_candidates"], 1)
+        self.assertEqual(result.debug_summary["max_agent_rounds"], 2)
+
     def test_solver_selector_stage_influences_final_pick(self) -> None:
         responses = [
             "Reasoning. FINAL_ANSWER: 10",
@@ -251,6 +280,7 @@ class SolverTests(unittest.TestCase):
             attempts=1,
             temperatures=(0.2,),
             early_stop_attempt=99,
+            agentic_tool_rounds=0,
             final_extractor_passes=0,
             verification_attempts=0,
             geometry_recheck_attempts=0,
@@ -275,6 +305,7 @@ class SolverTests(unittest.TestCase):
             attempts=1,
             temperatures=(0.2,),
             early_stop_attempt=99,
+            agentic_tool_rounds=0,
             verification_attempts=0,
             consistency_audit_attempts=0,
             geometry_recheck_attempts=0,

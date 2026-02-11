@@ -3,8 +3,8 @@ SRC_DIRS ?= src tests scripts
 PACKAGE ?= aimo3
 
 .PHONY: install install-dev lint format test check build clean \
-	solve-sample solve-groq-cheap benchmark-reference-groq-budget benchmark-reference-groq-120b-max \
-	kaggle-submit-120b kaggle-download kaggle-submit kaggle-pipeline
+	solve-sample solve-groq-cheap benchmark-reference-groq-budget benchmark-reference-groq-120b-max benchmark-reference-groq-autonomous120b \
+	kaggle-submit-120b kaggle-submit-autonomous120b kaggle-download kaggle-submit kaggle-pipeline
 
 install:
 	$(PYTHON) -m pip install -e .
@@ -100,6 +100,16 @@ benchmark-reference-groq-120b-max:
 		--request-timeout 300 \
 		--client-max-retries 2
 
+benchmark-reference-groq-autonomous120b:
+	PYTHONPATH=src $(PYTHON) -m aimo3.cli benchmark-reference \
+		--reference-csv reference/ai-mathematical-olympiad-progress-prize-3/reference.csv \
+		--output-dir artifacts/reference_benchmark_autonomous120b \
+		--profile autonomous120b \
+		--model openai/gpt-oss-120b \
+		--reasoning-effort high \
+		--request-timeout 420 \
+		--client-max-retries 2
+
 kaggle-submit-120b:
 	PYTHONPATH=src $(PYTHON) -m aimo3.cli kaggle-pipeline \
 		--competition ai-mathematical-olympiad-progress-prize-3 \
@@ -112,6 +122,19 @@ kaggle-submit-120b:
 		--agentic-tool-rounds 2 \
 		--request-timeout 300 \
 		--client-max-retries 1 \
+		--wait
+
+kaggle-submit-autonomous120b:
+	PYTHONPATH=src $(PYTHON) -m aimo3.cli kaggle-pipeline \
+		--competition ai-mathematical-olympiad-progress-prize-3 \
+		--input-csv data/raw/test.csv \
+		--output-csv artifacts/submission_autonomous120b.csv \
+		--debug-json artifacts/debug_autonomous120b.json \
+		--profile autonomous120b \
+		--model openai/gpt-oss-120b \
+		--reasoning-effort high \
+		--request-timeout 420 \
+		--client-max-retries 2 \
 		--wait
 
 kaggle-download:

@@ -32,7 +32,7 @@ def _add_solver_args(parser: argparse.ArgumentParser) -> None:
 
     parser.add_argument(
         "--profile",
-        choices=["cheap", "balanced", "hard", "aimo120b"],
+        choices=["cheap", "balanced", "hard", "aimo120b", "autonomous120b"],
         default="balanced",
     )
     parser.add_argument("--attempts", type=int, default=8)
@@ -47,6 +47,9 @@ def _add_solver_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--max-code-blocks-per-attempt", type=int, default=2)
     parser.add_argument("--agentic-tool-rounds", type=int, default=1)
     parser.add_argument("--agentic-observation-chars", type=int, default=1200)
+    parser.add_argument("--agentic-stateful-python", action="store_true", default=True)
+    parser.add_argument("--no-agentic-stateful-python", action="store_false", dest="agentic_stateful_python")
+    parser.add_argument("--agentic-state-chars", type=int, default=20000)
     parser.add_argument("--default-answer", type=int, default=0)
 
     parser.add_argument("--adaptive-complexity", action="store_true", default=True)
@@ -104,6 +107,8 @@ def _profile_overrides(args: argparse.Namespace) -> dict[str, int | bool | float
             "hard_mode": False,
             "agentic_tool_rounds": min(args.agentic_tool_rounds, 1),
             "agentic_observation_chars": min(args.agentic_observation_chars, 800),
+            "agentic_stateful_python": bool(args.agentic_stateful_python),
+            "agentic_state_chars": min(args.agentic_state_chars, 8000),
             "repair_passes": 0,
             "final_extractor_passes": 1,
             "final_extractor_max_tokens": min(args.final_extractor_max_tokens, 128),
@@ -128,6 +133,8 @@ def _profile_overrides(args: argparse.Namespace) -> dict[str, int | bool | float
             "max_code_blocks_per_attempt": max(args.max_code_blocks_per_attempt, 4),
             "agentic_tool_rounds": max(args.agentic_tool_rounds, 2),
             "agentic_observation_chars": max(args.agentic_observation_chars, 1200),
+            "agentic_stateful_python": True,
+            "agentic_state_chars": max(args.agentic_state_chars, 25000),
             "hard_mode": True,
             "hard_attempts": max(args.hard_attempts, 12),
             "hard_max_tokens": max(args.hard_max_tokens, 4096),
@@ -166,6 +173,8 @@ def _profile_overrides(args: argparse.Namespace) -> dict[str, int | bool | float
             "max_code_blocks_per_attempt": max(args.max_code_blocks_per_attempt, 4),
             "agentic_tool_rounds": max(args.agentic_tool_rounds, 2),
             "agentic_observation_chars": max(args.agentic_observation_chars, 1400),
+            "agentic_stateful_python": True,
+            "agentic_state_chars": max(args.agentic_state_chars, 30000),
             "hard_mode": True,
             "hard_attempts": max(args.hard_attempts, 12),
             "hard_max_tokens": max(args.hard_max_tokens, 4096),
@@ -194,6 +203,46 @@ def _profile_overrides(args: argparse.Namespace) -> dict[str, int | bool | float
             "sparse_recovery_attempts": max(args.sparse_recovery_attempts, 4),
             "sparse_recovery_temperature": min(args.sparse_recovery_temperature, 0.12),
             "early_stop_ratio": max(args.early_stop_ratio, 0.85),
+            "adaptive_complexity": True,
+        }
+
+    if args.profile == "autonomous120b":
+        return {
+            "attempts": max(args.attempts, 16),
+            "max_tokens": max(args.max_tokens, 6144),
+            "max_code_blocks_per_attempt": max(args.max_code_blocks_per_attempt, 6),
+            "agentic_tool_rounds": max(args.agentic_tool_rounds, 4),
+            "agentic_observation_chars": max(args.agentic_observation_chars, 2200),
+            "agentic_stateful_python": True,
+            "agentic_state_chars": max(args.agentic_state_chars, 40000),
+            "hard_mode": True,
+            "hard_attempts": max(args.hard_attempts, 16),
+            "hard_max_tokens": max(args.hard_max_tokens, 6144),
+            "repair_passes": max(args.repair_passes, 2),
+            "final_extractor_passes": max(args.final_extractor_passes, 2),
+            "final_extractor_max_tokens": max(args.final_extractor_max_tokens, 320),
+            "verification_attempts": max(args.verification_attempts, 4),
+            "verification_top_k": max(args.verification_top_k, 5),
+            "consistency_audit_attempts": max(args.consistency_audit_attempts, 3),
+            "consistency_audit_top_k": max(args.consistency_audit_top_k, 5),
+            "consistency_audit_temperature": min(args.consistency_audit_temperature, 0.08),
+            "adversarial_probe_attempts": max(args.adversarial_probe_attempts, 3),
+            "adversarial_probe_top_k": max(args.adversarial_probe_top_k, 5),
+            "adversarial_probe_temperature": min(args.adversarial_probe_temperature, 0.12),
+            "geometry_recheck_attempts": max(args.geometry_recheck_attempts, 3),
+            "geometry_top_k": max(args.geometry_top_k, 5),
+            "geometry_recheck_temperature": min(args.geometry_recheck_temperature, 0.06),
+            "small_answer_guard_attempts": max(args.small_answer_guard_attempts, 2),
+            "small_answer_guard_top_k": max(args.small_answer_guard_top_k, 4),
+            "small_answer_guard_temperature": min(args.small_answer_guard_temperature, 0.1),
+            "fallback_guess_attempts": max(args.fallback_guess_attempts, 1),
+            "fallback_guess_temperature": min(args.fallback_guess_temperature, 0.1),
+            "selector_attempts": max(args.selector_attempts, 3),
+            "selector_top_k": max(args.selector_top_k, 5),
+            "selector_temperature": min(args.selector_temperature, 0.05),
+            "sparse_recovery_attempts": max(args.sparse_recovery_attempts, 6),
+            "sparse_recovery_temperature": min(args.sparse_recovery_temperature, 0.1),
+            "early_stop_ratio": max(args.early_stop_ratio, 0.9),
             "adaptive_complexity": True,
         }
 
@@ -249,8 +298,8 @@ def _build_solver_from_args(args: argparse.Namespace) -> AIMO3Solver:
         return overrides.get(name, getattr(args, name))
 
     temperatures = tuple(args.temperatures)
-    if args.profile == "aimo120b" and temperatures == (0.15, 0.25, 0.35, 0.45):
-        temperatures = (0.12, 0.2, 0.35, 0.5, 0.7)
+    if args.profile in {"aimo120b", "autonomous120b"} and temperatures == (0.15, 0.25, 0.35, 0.45):
+        temperatures = (0.1, 0.2, 0.35, 0.5, 0.7, 0.85)
 
     config = SolverConfig(
         attempts=int(value("attempts")),
@@ -262,6 +311,8 @@ def _build_solver_from_args(args: argparse.Namespace) -> AIMO3Solver:
         max_code_blocks_per_attempt=int(value("max_code_blocks_per_attempt")),
         agentic_tool_rounds=int(value("agentic_tool_rounds")),
         agentic_observation_chars=int(value("agentic_observation_chars")),
+        agentic_stateful_python=bool(value("agentic_stateful_python")),
+        agentic_state_chars=int(value("agentic_state_chars")),
         default_answer=args.default_answer,
         adaptive_complexity=bool(value("adaptive_complexity")),
         hard_mode=bool(value("hard_mode")),

@@ -401,7 +401,8 @@ Python sandbox observations:
 
 Rules:
 - Use the observations to refine or correct the solution.
-- If needed, emit one compact python block for one additional check.
+- If evidence is insufficient, emit one compact python block for the next check.
+- Prefer exact arithmetic and explicit invariant checks over guessing.
 - End with exactly one line: FINAL_ANSWER: <integer>
 """
 
