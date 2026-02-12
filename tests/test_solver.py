@@ -1,3 +1,5 @@
+import threading
+import time
 import unittest
 
 from aimo3.solver import AIMO3Solver, SolverConfig
@@ -12,6 +14,20 @@ class DummyClient:
         response = self.responses[self.i % len(self.responses)]
         self.i += 1
         return response
+
+
+class SlowClient:
+    def __init__(self, response: str, delay_sec: float) -> None:
+        self.response = response
+        self.delay_sec = delay_sec
+        self.calls = 0
+        self._lock = threading.Lock()
+
+    def generate(self, *, system_prompt, user_prompt, temperature, max_tokens):
+        time.sleep(self.delay_sec)
+        with self._lock:
+            self.calls += 1
+        return self.response
 
 
 class SolverTests(unittest.TestCase):
@@ -319,6 +335,206 @@ class SolverTests(unittest.TestCase):
         result = solver.solve("Compute the integer.", problem_id=10)
         self.assertEqual(result.predicted_answer, 1234)
         self.assertEqual(result.debug_summary["fallback_guess_candidates"], 1)
+
+    def test_force_full_problem_time_prevents_early_stop(self) -> None:
+        responses = [
+            "Reasoning. FINAL_ANSWER: 42",
+            "Reasoning. FINAL_ANSWER: 42",
+            "Reasoning. FINAL_ANSWER: 42",
+        ]
+        client = DummyClient(responses)
+        cfg = SolverConfig(
+            attempts=3,
+            temperatures=(0.2,),
+            min_consensus=2,
+            early_stop_ratio=0.8,
+            early_stop_attempt=2,
+            force_full_problem_time=True,
+            verification_attempts=0,
+            consistency_audit_attempts=0,
+            adversarial_probe_attempts=0,
+            geometry_recheck_attempts=0,
+            small_answer_guard_attempts=0,
+            fallback_guess_attempts=0,
+            selector_attempts=0,
+            sparse_recovery_attempts=0,
+        )
+        solver = AIMO3Solver(client, config=cfg)
+
+        result = solver.solve("Find x modulo 100000", problem_id=12)
+        self.assertEqual(result.predicted_answer, 42)
+        self.assertEqual(result.debug_summary["candidate_count"], 3)
+
+    def test_problem_time_budget_can_skip_attempts_when_too_low(self) -> None:
+        responses = ["Reasoning. FINAL_ANSWER: 42"]
+        client = DummyClient(responses)
+        cfg = SolverConfig(
+            attempts=3,
+            temperatures=(0.2,),
+            per_problem_time_sec=1,
+            min_time_for_attempt_sec=9_999,
+            min_time_for_stage_sec=9_999,
+            verification_attempts=0,
+            consistency_audit_attempts=0,
+            adversarial_probe_attempts=0,
+            geometry_recheck_attempts=0,
+            small_answer_guard_attempts=0,
+            fallback_guess_attempts=0,
+            selector_attempts=0,
+            sparse_recovery_attempts=0,
+            default_answer=31415,
+        )
+        solver = AIMO3Solver(client, config=cfg)
+
+        result = solver.solve("Find x modulo 100000", problem_id=13)
+        self.assertEqual(result.predicted_answer, 31415)
+        self.assertEqual(result.debug_summary["candidate_count"], 0)
+
+    def test_parallel_attempt_workers_overlap_attempt_execution(self) -> None:
+        client = SlowClient("Reasoning. FINAL_ANSWER: 42", delay_sec=0.2)
+        cfg = SolverConfig(
+            attempts=4,
+            temperatures=(0.2,),
+            early_stop_attempt=99,
+            parallel_attempt_workers=4,
+            verification_attempts=0,
+            consistency_audit_attempts=0,
+            adversarial_probe_attempts=0,
+            geometry_recheck_attempts=0,
+            small_answer_guard_attempts=0,
+            fallback_guess_attempts=0,
+            selector_attempts=0,
+            sparse_recovery_attempts=0,
+        )
+        solver = AIMO3Solver(client, config=cfg)
+
+        started = time.perf_counter()
+        result = solver.solve("Find x modulo 100000", problem_id=14)
+        elapsed = time.perf_counter() - started
+
+        self.assertEqual(result.predicted_answer, 42)
+        self.assertEqual(result.debug_summary["candidate_count"], 4)
+        self.assertEqual(client.calls, 4)
+        # Sequential baseline would be ~0.8s for four calls.
+        self.assertLess(elapsed, 0.65)
+
+    def test_escalation_stage_runs_on_uncertain_candidates(self) -> None:
+        responses = [
+            "Reasoning. FINAL_ANSWER: 10",
+            "Reasoning. FINAL_ANSWER: 20",
+            "Escalation trace. FINAL_ANSWER: 777",
+        ]
+        client = DummyClient(responses)
+        cfg = SolverConfig(
+            attempts=2,
+            temperatures=(0.2,),
+            early_stop_attempt=99,
+            escalation_attempts=1,
+            verification_attempts=0,
+            consistency_audit_attempts=0,
+            adversarial_probe_attempts=0,
+            geometry_recheck_attempts=0,
+            small_answer_guard_attempts=0,
+            fallback_guess_attempts=0,
+            selector_attempts=0,
+            sparse_recovery_attempts=0,
+        )
+        solver = AIMO3Solver(client, config=cfg)
+
+        result = solver.solve("Compute final integer answer.", problem_id=15)
+        self.assertEqual(result.predicted_answer, 777)
+        self.assertEqual(result.debug_summary["escalation_candidates"], 1)
+
+    def test_escalation_stage_skips_when_consensus_is_strong(self) -> None:
+        responses = [
+            "Reasoning. FINAL_ANSWER: 42",
+            "Reasoning. FINAL_ANSWER: 42",
+            "Escalation trace. FINAL_ANSWER: 777",
+        ]
+        client = DummyClient(responses)
+        cfg = SolverConfig(
+            attempts=2,
+            temperatures=(0.2,),
+            early_stop_attempt=99,
+            escalation_attempts=1,
+            escalation_min_valid=2,
+            escalation_trigger_ratio=0.72,
+            verification_attempts=0,
+            consistency_audit_attempts=0,
+            adversarial_probe_attempts=0,
+            geometry_recheck_attempts=0,
+            small_answer_guard_attempts=0,
+            fallback_guess_attempts=0,
+            selector_attempts=0,
+            sparse_recovery_attempts=0,
+        )
+        solver = AIMO3Solver(client, config=cfg)
+
+        result = solver.solve("Compute final integer answer.", problem_id=16)
+        self.assertEqual(result.predicted_answer, 42)
+        self.assertEqual(result.debug_summary["escalation_candidates"], 0)
+
+    def test_force_tool_round_runs_even_without_code_block(self) -> None:
+        responses = [
+            "Reasoning. FINAL_ANSWER: 42",
+            "Check with python.\n```python\nprint(42)\n```\nFINAL_ANSWER: 42",
+        ]
+        client = DummyClient(responses)
+        cfg = SolverConfig(
+            attempts=1,
+            temperatures=(0.2,),
+            early_stop_attempt=99,
+            agentic_tool_rounds=1,
+            force_tool_round_for_unverified=True,
+            verification_attempts=0,
+            consistency_audit_attempts=0,
+            adversarial_probe_attempts=0,
+            geometry_recheck_attempts=0,
+            small_answer_guard_attempts=0,
+            fallback_guess_attempts=0,
+            selector_attempts=0,
+            sparse_recovery_attempts=0,
+        )
+        solver = AIMO3Solver(client, config=cfg)
+
+        result = solver.solve(
+            "Across all values, find the largest non-negative integer satisfying the constraint.",
+            problem_id=17,
+        )
+        self.assertEqual(result.predicted_answer, 42)
+        self.assertEqual(result.debug_summary["max_agent_rounds"], 1)
+        self.assertGreaterEqual(result.debug_summary["verified_candidates"], 1)
+
+    def test_stage_time_reserve_preserves_budget_for_escalation(self) -> None:
+        responses = [
+            "Reasoning. FINAL_ANSWER: 10",
+            "Escalation follow-up. FINAL_ANSWER: 20",
+        ]
+        client = DummyClient(responses)
+        cfg = SolverConfig(
+            attempts=3,
+            temperatures=(0.2,),
+            per_problem_time_sec=1,
+            min_time_for_attempt_sec=0,
+            min_time_for_stage_sec=0,
+            stage_time_reserve_sec=1,
+            escalation_attempts=1,
+            escalation_min_valid=2,
+            verification_attempts=0,
+            consistency_audit_attempts=0,
+            adversarial_probe_attempts=0,
+            geometry_recheck_attempts=0,
+            small_answer_guard_attempts=0,
+            fallback_guess_attempts=0,
+            selector_attempts=0,
+            sparse_recovery_attempts=0,
+        )
+        solver = AIMO3Solver(client, config=cfg)
+
+        result = solver.solve("Compute the final integer answer.", problem_id=18)
+        self.assertEqual(result.predicted_answer, 20)
+        self.assertEqual(result.debug_summary["candidate_count"], 2)
+        self.assertEqual(result.debug_summary["escalation_candidates"], 1)
 
 
 if __name__ == "__main__":

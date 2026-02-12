@@ -4,6 +4,17 @@ Date: 2026-02-11
 
 Goal: improve solved-count under realistic runtime and cost constraints.
 
+## Implemented Today (Delta)
+
+- Added **parallel attempt + tool harness** controls in solver and CLI.
+- Added **10-minute full-budget mode** defaults for `autonomous120b`.
+- Added **uncertainty-triggered escalation stage** before arbitration.
+- Added **`benchmark-sweep` harness** with:
+  - curated trial variants,
+  - leaderboard metrics,
+  - best-trial export + recommended solve command.
+- Added regression coverage for parallel/excalation/CLI sweep behavior.
+
 ## 1) Two-pass model cascade (20B -> 120B escalation)
 
 - Why it works: most problems are not equally hard; 120B budget is best spent on uncertain cases.

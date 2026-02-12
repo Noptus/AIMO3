@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import re
+import time
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -45,6 +47,14 @@ class SolverConfig:
     agentic_observation_chars: int = 1200
     agentic_stateful_python: bool = True
     agentic_state_chars: int = 20_000
+    parallel_attempt_workers: int = 1
+    parallel_code_workers: int = 1
+    stage_time_reserve_sec: int = 0
+    force_tool_round_for_unverified: bool = False
+    per_problem_time_sec: int = 0
+    min_time_for_attempt_sec: int = 20
+    min_time_for_stage_sec: int = 8
+    force_full_problem_time: bool = False
     default_answer: int = 0
 
     # Hard-problem behavior.
@@ -93,6 +103,12 @@ class SolverConfig:
     # If too few valid answers were produced, run extra rescue attempts.
     sparse_recovery_attempts: int = 2
     sparse_recovery_temperature: float = 0.1
+
+    # Uncertainty-triggered escalation before arbitration stages.
+    escalation_attempts: int = 0
+    escalation_temperature: float = 0.55
+    escalation_trigger_ratio: float = 0.72
+    escalation_min_valid: int = 3
 
 
 @dataclass(frozen=True)
@@ -211,6 +227,7 @@ class SolveResult:
             "small_guard_candidates": sum(1 for c in self.candidates if c.stage == "small_guard"),
             "fallback_guess_candidates": sum(1 for c in self.candidates if c.stage == "fallback_guess"),
             "selector_candidates": sum(1 for c in self.candidates if c.stage == "selector"),
+            "escalation_candidates": sum(1 for c in self.candidates if c.stage == "escalation"),
             "problem_number_hits": sum(1 for c in self.candidates if c.answer_in_problem),
         }
 
@@ -234,112 +251,133 @@ class AIMO3Solver:
         profile = estimate_problem_profile(problem_text)
         budget = self._build_budget(profile)
         problem_numbers = self._extract_problem_numbers(problem_text)
+        deadline = self._problem_deadline()
 
-        candidates: list[Candidate] = []
-
-        for attempt in range(budget.attempts):
-            temp = self.config.temperatures[attempt % len(self.config.temperatures)]
-            candidate = self._run_attempt(
-                problem_text=problem_text,
-                modulus=modulus,
-                profile=profile,
-                attempt=attempt,
-                temperature=temp,
-                max_tokens=budget.max_tokens,
-                problem_numbers=problem_numbers,
-            )
-            candidates.append(candidate)
-
-            if budget.allow_early_stop and self._should_early_stop(candidates):
-                break
-
-        candidates.extend(
-            self._run_verification(
-                problem_text=problem_text,
-                modulus=modulus,
-                profile=profile,
-                candidates=candidates,
-                max_tokens=max(256, min(640, budget.max_tokens // 2)),
-                problem_numbers=problem_numbers,
-            )
+        candidates = self._run_initial_attempts(
+            problem_text=problem_text,
+            modulus=modulus,
+            profile=profile,
+            budget=budget,
+            problem_numbers=problem_numbers,
+            deadline=deadline,
         )
 
-        candidates.extend(
-            self._run_sparse_recovery(
-                problem_text=problem_text,
-                modulus=modulus,
-                profile=profile,
-                candidates=candidates,
-                max_tokens=budget.max_tokens,
-                problem_numbers=problem_numbers,
+        if self._has_time(deadline, self.config.min_time_for_attempt_sec):
+            candidates.extend(
+                self._run_escalation_attempts(
+                    problem_text=problem_text,
+                    modulus=modulus,
+                    profile=profile,
+                    candidates=candidates,
+                    max_tokens=min(self.config.hard_max_tokens, budget.max_tokens + 512),
+                    problem_numbers=problem_numbers,
+                    deadline=deadline,
+                )
             )
-        )
 
-        candidates.extend(
-            self._run_consistency_audit(
-                problem_text=problem_text,
-                modulus=modulus,
-                profile=profile,
-                candidates=candidates,
-                max_tokens=max(320, min(896, budget.max_tokens // 2)),
-                problem_numbers=problem_numbers,
+        if self._has_time(deadline, self.config.min_time_for_stage_sec):
+            candidates.extend(
+                self._run_verification(
+                    problem_text=problem_text,
+                    modulus=modulus,
+                    profile=profile,
+                    candidates=candidates,
+                    max_tokens=max(256, min(640, budget.max_tokens // 2)),
+                    problem_numbers=problem_numbers,
+                    deadline=deadline,
+                )
             )
-        )
 
-        candidates.extend(
-            self._run_adversarial_probe(
-                problem_text=problem_text,
-                modulus=modulus,
-                profile=profile,
-                candidates=candidates,
-                max_tokens=max(320, min(896, budget.max_tokens // 2)),
-                problem_numbers=problem_numbers,
+        if self._has_time(deadline, self.config.min_time_for_stage_sec):
+            candidates.extend(
+                self._run_sparse_recovery(
+                    problem_text=problem_text,
+                    modulus=modulus,
+                    profile=profile,
+                    candidates=candidates,
+                    max_tokens=budget.max_tokens,
+                    problem_numbers=problem_numbers,
+                    deadline=deadline,
+                )
             )
-        )
 
-        candidates.extend(
-            self._run_geometry_recheck(
-                problem_text=problem_text,
-                modulus=modulus,
-                profile=profile,
-                candidates=candidates,
-                max_tokens=max(320, min(896, budget.max_tokens // 2)),
-                problem_numbers=problem_numbers,
+        if self._has_time(deadline, self.config.min_time_for_stage_sec):
+            candidates.extend(
+                self._run_consistency_audit(
+                    problem_text=problem_text,
+                    modulus=modulus,
+                    profile=profile,
+                    candidates=candidates,
+                    max_tokens=max(320, min(896, budget.max_tokens // 2)),
+                    problem_numbers=problem_numbers,
+                    deadline=deadline,
+                )
             )
-        )
 
-        candidates.extend(
-            self._run_small_answer_guard(
-                problem_text=problem_text,
-                modulus=modulus,
-                profile=profile,
-                candidates=candidates,
-                max_tokens=max(320, min(896, budget.max_tokens // 2)),
-                problem_numbers=problem_numbers,
+        if self._has_time(deadline, self.config.min_time_for_stage_sec):
+            candidates.extend(
+                self._run_adversarial_probe(
+                    problem_text=problem_text,
+                    modulus=modulus,
+                    profile=profile,
+                    candidates=candidates,
+                    max_tokens=max(320, min(896, budget.max_tokens // 2)),
+                    problem_numbers=problem_numbers,
+                    deadline=deadline,
+                )
             )
-        )
 
-        candidates.extend(
-            self._run_selector(
-                problem_text=problem_text,
-                modulus=modulus,
-                profile=profile,
-                candidates=candidates,
-                max_tokens=max(384, min(1024, budget.max_tokens // 2)),
-                problem_numbers=problem_numbers,
+        if self._has_time(deadline, self.config.min_time_for_stage_sec):
+            candidates.extend(
+                self._run_geometry_recheck(
+                    problem_text=problem_text,
+                    modulus=modulus,
+                    profile=profile,
+                    candidates=candidates,
+                    max_tokens=max(320, min(896, budget.max_tokens // 2)),
+                    problem_numbers=problem_numbers,
+                    deadline=deadline,
+                )
             )
-        )
 
-        candidates.extend(
-            self._run_fallback_guess(
-                problem_text=problem_text,
-                modulus=modulus,
-                profile=profile,
-                candidates=candidates,
-                max_tokens=max(192, min(512, budget.max_tokens // 3)),
-                problem_numbers=problem_numbers,
+        if self._has_time(deadline, self.config.min_time_for_stage_sec):
+            candidates.extend(
+                self._run_small_answer_guard(
+                    problem_text=problem_text,
+                    modulus=modulus,
+                    profile=profile,
+                    candidates=candidates,
+                    max_tokens=max(320, min(896, budget.max_tokens // 2)),
+                    problem_numbers=problem_numbers,
+                    deadline=deadline,
+                )
             )
-        )
+
+        if self._has_time(deadline, self.config.min_time_for_stage_sec):
+            candidates.extend(
+                self._run_selector(
+                    problem_text=problem_text,
+                    modulus=modulus,
+                    profile=profile,
+                    candidates=candidates,
+                    max_tokens=max(384, min(1024, budget.max_tokens // 2)),
+                    problem_numbers=problem_numbers,
+                    deadline=deadline,
+                )
+            )
+
+        if self._has_time(deadline, 2):
+            candidates.extend(
+                self._run_fallback_guess(
+                    problem_text=problem_text,
+                    modulus=modulus,
+                    profile=profile,
+                    candidates=candidates,
+                    max_tokens=max(192, min(512, budget.max_tokens // 3)),
+                    problem_numbers=problem_numbers,
+                    deadline=deadline,
+                )
+            )
 
         predicted = self._aggregate(candidates, modulus, problem_numbers)
 
@@ -354,7 +392,7 @@ class AIMO3Solver:
     def _build_budget(self, profile: ProblemProfile) -> SolveBudget:
         attempts = self.config.attempts
         max_tokens = self.config.max_tokens
-        allow_early_stop = True
+        allow_early_stop = not self.config.force_full_problem_time
 
         is_hard = self.config.hard_mode or (
             self.config.adaptive_complexity and profile.complexity == "hard"
@@ -381,6 +419,210 @@ class AIMO3Solver:
             allow_early_stop=allow_early_stop,
         )
 
+    def _problem_deadline(self) -> float | None:
+        if self.config.per_problem_time_sec <= 0:
+            return None
+        return time.monotonic() + float(self.config.per_problem_time_sec)
+
+    def _remaining_time(self, deadline: float | None) -> float:
+        if deadline is None:
+            return float("inf")
+        return max(0.0, deadline - time.monotonic())
+
+    def _has_time(self, deadline: float | None, required_sec: float = 0.0) -> bool:
+        return self._remaining_time(deadline) > max(0.0, required_sec)
+
+    def _downstream_stages_enabled(self) -> bool:
+        return any(
+            [
+                self.config.verification_attempts > 0,
+                self.config.sparse_recovery_attempts > 0,
+                self.config.consistency_audit_attempts > 0,
+                self.config.adversarial_probe_attempts > 0,
+                self.config.geometry_recheck_attempts > 0,
+                self.config.small_answer_guard_attempts > 0,
+                self.config.selector_attempts > 0,
+                self.config.fallback_guess_attempts > 0,
+                self.config.escalation_attempts > 0,
+            ]
+        )
+
+    def _should_hold_stage_reserve(self, deadline: float | None) -> bool:
+        if deadline is None:
+            return False
+        if self.config.stage_time_reserve_sec <= 0:
+            return False
+        if not self._downstream_stages_enabled():
+            return False
+        return self._remaining_time(deadline) <= float(self.config.stage_time_reserve_sec)
+
+    def _needs_escalation(self, candidates: list[Candidate]) -> bool:
+        if self.config.escalation_attempts <= 0:
+            return False
+
+        valid = [c for c in candidates if c.answer is not None]
+        if len(valid) < self.config.escalation_min_valid:
+            return True
+
+        answers = [c.answer for c in valid if c.answer is not None]
+        if not answers:
+            return True
+
+        _, top_count = Counter(answers).most_common(1)[0]
+        top_ratio = top_count / max(1, len(answers))
+        if top_ratio < self.config.escalation_trigger_ratio:
+            return True
+
+        top_answer = Counter(answers).most_common(1)[0][0]
+        strong_top_evidence = any(
+            c.answer == top_answer
+            and (
+                c.code_verified
+                or c.stage in {"verifier", "consistency_audit", "adversarial_probe", "geometry_recheck", "selector"}
+            )
+            for c in valid
+        )
+        if top_answer in {0, 1} and not strong_top_evidence:
+            return True
+
+        return False
+
+    def _run_initial_attempts(
+        self,
+        *,
+        problem_text: str,
+        modulus: int | None,
+        profile: ProblemProfile,
+        budget: SolveBudget,
+        problem_numbers: set[int],
+        deadline: float | None,
+    ) -> list[Candidate]:
+        workers = max(1, int(self.config.parallel_attempt_workers))
+        if workers <= 1:
+            candidates: list[Candidate] = []
+            for attempt in range(budget.attempts):
+                if not self._has_time(deadline, self.config.min_time_for_attempt_sec):
+                    break
+                if candidates and self._should_hold_stage_reserve(deadline):
+                    break
+                temp = self.config.temperatures[attempt % len(self.config.temperatures)]
+                candidate = self._run_attempt(
+                    problem_text=problem_text,
+                    modulus=modulus,
+                    profile=profile,
+                    attempt=attempt,
+                    temperature=temp,
+                    max_tokens=budget.max_tokens,
+                    problem_numbers=problem_numbers,
+                    deadline=deadline,
+                )
+                candidates.append(candidate)
+                if (
+                    budget.allow_early_stop
+                    and not self.config.force_full_problem_time
+                    and self._should_early_stop(candidates)
+                ):
+                    break
+            return candidates
+
+        candidates: list[Candidate] = []
+        next_attempt = 0
+        while next_attempt < budget.attempts:
+            if not self._has_time(deadline, self.config.min_time_for_attempt_sec):
+                break
+            if candidates and self._should_hold_stage_reserve(deadline):
+                break
+
+            batch_size = min(workers, budget.attempts - next_attempt)
+            futures = {}
+            with ThreadPoolExecutor(max_workers=batch_size) as pool:
+                for _ in range(batch_size):
+                    if not self._has_time(deadline, self.config.min_time_for_attempt_sec):
+                        break
+                    if candidates and self._should_hold_stage_reserve(deadline):
+                        break
+                    attempt = next_attempt
+                    next_attempt += 1
+                    temp = self.config.temperatures[attempt % len(self.config.temperatures)]
+                    future = pool.submit(
+                        self._run_attempt,
+                        problem_text=problem_text,
+                        modulus=modulus,
+                        profile=profile,
+                        attempt=attempt,
+                        temperature=temp,
+                        max_tokens=budget.max_tokens,
+                        problem_numbers=problem_numbers,
+                        deadline=deadline,
+                    )
+                    futures[future] = (attempt, temp)
+
+                for future in as_completed(futures):
+                    attempt, temp = futures[future]
+                    try:
+                        candidate = future.result()
+                    except Exception as exc:
+                        candidate = Candidate(
+                            attempt=attempt,
+                            temperature=temp,
+                            response_text="",
+                            answer=None,
+                            answer_source="none",
+                            modulus=modulus,
+                            category=profile.category,
+                            archetype=profile.archetype,
+                            complexity=profile.complexity,
+                            generation_error=f"parallel_attempt_error: {exc}",
+                        )
+                    candidates.append(candidate)
+
+            candidates.sort(key=lambda c: c.attempt)
+            if (
+                budget.allow_early_stop
+                and not self.config.force_full_problem_time
+                and self._should_early_stop(candidates)
+            ):
+                break
+
+        return candidates
+
+    def _run_escalation_attempts(
+        self,
+        *,
+        problem_text: str,
+        modulus: int | None,
+        profile: ProblemProfile,
+        candidates: list[Candidate],
+        max_tokens: int,
+        problem_numbers: set[int],
+        deadline: float | None,
+    ) -> list[Candidate]:
+        if not self._needs_escalation(candidates):
+            return []
+
+        staged: list[Candidate] = []
+        base_attempt = 30_000 + len(candidates)
+        for idx in range(self.config.escalation_attempts):
+            if not self._has_time(deadline, self.config.min_time_for_attempt_sec):
+                break
+
+            # Temperature ladder broadens exploration while staying bounded.
+            temp = min(0.95, self.config.escalation_temperature + 0.08 * idx)
+            attempt_candidate = self._run_attempt(
+                problem_text=problem_text,
+                modulus=modulus,
+                profile=profile,
+                attempt=base_attempt + idx,
+                temperature=temp,
+                max_tokens=max_tokens,
+                problem_numbers=problem_numbers,
+                deadline=deadline,
+            )
+            attempt_candidate.stage = "escalation"
+            staged.append(attempt_candidate)
+
+        return staged
+
     def _run_attempt(
         self,
         *,
@@ -391,7 +633,22 @@ class AIMO3Solver:
         temperature: float,
         max_tokens: int,
         problem_numbers: set[int],
+        deadline: float | None = None,
     ) -> Candidate:
+        if not self._has_time(deadline, self.config.min_time_for_attempt_sec):
+            return Candidate(
+                attempt=attempt,
+                temperature=temperature,
+                response_text="",
+                answer=None,
+                answer_source="none",
+                modulus=modulus,
+                category=profile.category,
+                archetype=profile.archetype,
+                complexity=profile.complexity,
+                generation_error="problem_time_budget_exhausted_before_attempt",
+            )
+
         prompt = build_prompt(
             problem_text,
             attempt_index=attempt,
@@ -455,10 +712,14 @@ class AIMO3Solver:
         phase_answers, phase_errors, phase_blocks = refresh_from_response(response_text)
 
         for round_idx in range(self.config.agentic_tool_rounds):
+            if not self._has_time(deadline, self.config.min_time_for_stage_sec):
+                break
             if not self._should_continue_agent_loop(
                 answer=answer,
                 answer_source=answer_source,
                 code_blocks_in_response=phase_blocks,
+                has_code_evidence=bool(code_answers),
+                complexity=profile.complexity,
             ):
                 break
 
@@ -494,6 +755,8 @@ class AIMO3Solver:
         repair_used = False
         extractor_used = False
         for _ in range(self.config.repair_passes):
+            if not self._has_time(deadline, self.config.min_time_for_stage_sec):
+                break
             if not self._needs_repair(answer, code_answers):
                 break
 
@@ -534,6 +797,8 @@ class AIMO3Solver:
                 answer_source = "code_majority"
 
         for _ in range(self.config.final_extractor_passes):
+            if not self._has_time(deadline, 2):
+                break
             if answer is not None:
                 break
             extractor_used = True
@@ -591,9 +856,33 @@ class AIMO3Solver:
         code_answers: list[int] = []
         sandbox_errors: list[str] = []
         code_blocks = extract_python_blocks(response_text)
+        selected_blocks = code_blocks[: self.config.max_code_blocks_per_attempt]
         prefix = stateful_prefix if self.config.agentic_stateful_python else ""
 
-        for block in code_blocks[: self.config.max_code_blocks_per_attempt]:
+        can_parallel_stateless = (
+            not self.config.agentic_stateful_python
+            and len(selected_blocks) > 1
+            and int(self.config.parallel_code_workers) > 1
+        )
+        if can_parallel_stateless:
+            workers = min(len(selected_blocks), max(1, int(self.config.parallel_code_workers)))
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                futures = [pool.submit(execute_python, block, policy=self.sandbox_policy) for block in selected_blocks]
+                for future in futures:
+                    try:
+                        run = future.result()
+                    except Exception as exc:
+                        sandbox_errors.append(f"parallel_code_execution_error: {exc}")
+                        continue
+                    if run.success:
+                        code_answer = parse_integer_from_stdout(run.stdout, modulus=modulus)
+                        if code_answer is not None:
+                            code_answers.append(code_answer)
+                    elif run.error:
+                        sandbox_errors.append(run.error)
+            return code_answers, sandbox_errors, len(code_blocks), prefix
+
+        for block in selected_blocks:
             executable = block
             if prefix:
                 executable = prefix + "\n\n" + block
@@ -639,10 +928,18 @@ class AIMO3Solver:
         answer: int | None,
         answer_source: str,
         code_blocks_in_response: int,
+        has_code_evidence: bool,
+        complexity: str,
     ) -> bool:
         if self.config.agentic_tool_rounds <= 0:
             return False
         if answer is None:
+            return True
+        if (
+            self.config.force_tool_round_for_unverified
+            and not has_code_evidence
+            and complexity in {"medium", "hard"}
+        ):
             return True
         if code_blocks_in_response <= 0 and answer_source in {"final_answer_tag", "boxed"}:
             return False
@@ -694,6 +991,7 @@ class AIMO3Solver:
         candidates: list[Candidate],
         max_tokens: int,
         problem_numbers: set[int],
+        deadline: float | None = None,
     ) -> list[Candidate]:
         if self.config.verification_attempts <= 0:
             return []
@@ -712,6 +1010,8 @@ class AIMO3Solver:
         allowed = set(candidate_answers)
 
         for verify_idx in range(self.config.verification_attempts):
+            if not self._has_time(deadline, self.config.min_time_for_stage_sec):
+                break
             prompt = build_verifier_prompt(
                 problem_text,
                 candidate_answers=candidate_answers,
@@ -778,6 +1078,7 @@ class AIMO3Solver:
         candidates: list[Candidate],
         max_tokens: int,
         problem_numbers: set[int],
+        deadline: float | None = None,
     ) -> list[Candidate]:
         if self.config.consistency_audit_attempts <= 0:
             return []
@@ -798,6 +1099,8 @@ class AIMO3Solver:
         audit_candidates: list[Candidate] = []
 
         for idx in range(self.config.consistency_audit_attempts):
+            if not self._has_time(deadline, self.config.min_time_for_stage_sec):
+                break
             prompt = build_consistency_audit_prompt(
                 problem_text,
                 candidate_answers=candidate_answers,
@@ -864,6 +1167,7 @@ class AIMO3Solver:
         candidates: list[Candidate],
         max_tokens: int,
         problem_numbers: set[int],
+        deadline: float | None = None,
     ) -> list[Candidate]:
         if self.config.adversarial_probe_attempts <= 0:
             return []
@@ -882,6 +1186,8 @@ class AIMO3Solver:
 
         probe_candidates: list[Candidate] = []
         for idx in range(self.config.adversarial_probe_attempts):
+            if not self._has_time(deadline, self.config.min_time_for_stage_sec):
+                break
             prompt = build_adversarial_probe_prompt(
                 problem_text,
                 candidate_answers=candidate_answers,
@@ -976,6 +1282,7 @@ class AIMO3Solver:
         candidates: list[Candidate],
         max_tokens: int,
         problem_numbers: set[int],
+        deadline: float | None = None,
     ) -> list[Candidate]:
         if self.config.geometry_recheck_attempts <= 0:
             return []
@@ -998,6 +1305,8 @@ class AIMO3Solver:
         geometry_candidates: list[Candidate] = []
 
         for idx in range(self.config.geometry_recheck_attempts):
+            if not self._has_time(deadline, self.config.min_time_for_stage_sec):
+                break
             prompt = build_geometry_recheck_prompt(
                 problem_text,
                 candidate_answers=candidate_answers,
@@ -1064,6 +1373,7 @@ class AIMO3Solver:
         candidates: list[Candidate],
         max_tokens: int,
         problem_numbers: set[int],
+        deadline: float | None = None,
     ) -> list[Candidate]:
         if self.config.small_answer_guard_attempts <= 0:
             return []
@@ -1082,6 +1392,8 @@ class AIMO3Solver:
 
         guard_candidates: list[Candidate] = []
         for idx in range(self.config.small_answer_guard_attempts):
+            if not self._has_time(deadline, self.config.min_time_for_stage_sec):
+                break
             prompt = build_small_answer_guard_prompt(
                 problem_text,
                 candidate_answers=candidate_answers,
@@ -1176,6 +1488,7 @@ class AIMO3Solver:
         candidates: list[Candidate],
         max_tokens: int,
         problem_numbers: set[int],
+        deadline: float | None = None,
     ) -> list[Candidate]:
         if self.config.fallback_guess_attempts <= 0:
             return []
@@ -1184,6 +1497,8 @@ class AIMO3Solver:
 
         fallback_candidates: list[Candidate] = []
         for idx in range(self.config.fallback_guess_attempts):
+            if not self._has_time(deadline, 2):
+                break
             prompt = build_fallback_guess_prompt(
                 problem_text,
                 modulus=modulus,
@@ -1281,6 +1596,7 @@ class AIMO3Solver:
         candidates: list[Candidate],
         max_tokens: int,
         problem_numbers: set[int],
+        deadline: float | None = None,
     ) -> list[Candidate]:
         if self.config.selector_attempts <= 0:
             return []
@@ -1298,6 +1614,8 @@ class AIMO3Solver:
         selector_candidates: list[Candidate] = []
 
         for idx in range(self.config.selector_attempts):
+            if not self._has_time(deadline, self.config.min_time_for_stage_sec):
+                break
             prompt = build_selector_prompt(
                 problem_text,
                 answer_options=options,
@@ -1364,6 +1682,7 @@ class AIMO3Solver:
         candidates: list[Candidate],
         max_tokens: int,
         problem_numbers: set[int],
+        deadline: float | None = None,
     ) -> list[Candidate]:
         if self.config.sparse_recovery_attempts <= 0:
             return []
@@ -1375,6 +1694,8 @@ class AIMO3Solver:
         rescue: list[Candidate] = []
         base_idx = 20_000 + len(candidates)
         for i in range(self.config.sparse_recovery_attempts):
+            if not self._has_time(deadline, self.config.min_time_for_attempt_sec):
+                break
             rescue_candidate = self._run_attempt(
                 problem_text=problem_text,
                 modulus=modulus,
@@ -1383,6 +1704,7 @@ class AIMO3Solver:
                 temperature=self.config.sparse_recovery_temperature,
                 max_tokens=max_tokens,
                 problem_numbers=problem_numbers,
+                deadline=deadline,
             )
             rescue_candidate.stage = "recovery"
             rescue.append(rescue_candidate)

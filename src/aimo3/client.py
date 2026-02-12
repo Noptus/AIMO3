@@ -98,7 +98,7 @@ class OpenAICompatChatClient:
                     continue
                 raise RuntimeError(f"Model request failed after retries: {exc}") from exc
 
-            if response.status_code in {429, 500, 502, 503, 504}:
+            if response.status_code in {408, 409, 429, 500, 502, 503, 504, 520, 522, 523, 524}:
                 last_error = RuntimeError(
                     f"Transient model backend status {response.status_code}: {response.text[:200]}"
                 )

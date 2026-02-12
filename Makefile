@@ -3,7 +3,7 @@ SRC_DIRS ?= src tests scripts
 PACKAGE ?= aimo3
 
 .PHONY: install install-dev lint format test check build clean \
-	solve-sample solve-groq-cheap benchmark-reference-groq-budget benchmark-reference-groq-120b-max benchmark-reference-groq-autonomous120b \
+	solve-sample solve-groq-cheap benchmark-reference-groq-budget benchmark-reference-groq-120b-max benchmark-reference-groq-autonomous120b benchmark-sweep-groq-autonomous120b \
 	kaggle-submit-120b kaggle-submit-autonomous120b kaggle-download kaggle-submit kaggle-pipeline
 
 install:
@@ -107,7 +107,33 @@ benchmark-reference-groq-autonomous120b:
 		--profile autonomous120b \
 		--model openai/gpt-oss-120b \
 		--reasoning-effort high \
-		--request-timeout 420 \
+		--per-problem-time-sec 600 \
+		--force-full-problem-time \
+		--stage-time-reserve-sec 45 \
+		--force-tool-round-for-unverified \
+		--agentic-tool-rounds 5 \
+		--max-code-blocks-per-attempt 6 \
+		--parallel-attempt-workers 4 \
+		--parallel-code-workers 4 \
+		--request-timeout 600 \
+		--client-max-retries 2
+
+benchmark-sweep-groq-autonomous120b:
+	PYTHONPATH=src $(PYTHON) -m aimo3.cli benchmark-sweep \
+		--reference-csv reference/ai-mathematical-olympiad-progress-prize-3/reference.csv \
+		--output-dir artifacts/reference_sweep_autonomous120b \
+		--profile autonomous120b \
+		--model openai/gpt-oss-120b \
+		--trial-set standard \
+		--per-problem-time-sec 600 \
+		--force-full-problem-time \
+		--stage-time-reserve-sec 45 \
+		--force-tool-round-for-unverified \
+		--agentic-tool-rounds 5 \
+		--max-code-blocks-per-attempt 6 \
+		--parallel-attempt-workers 4 \
+		--parallel-code-workers 4 \
+		--request-timeout 600 \
 		--client-max-retries 2
 
 kaggle-submit-120b:
@@ -133,7 +159,15 @@ kaggle-submit-autonomous120b:
 		--profile autonomous120b \
 		--model openai/gpt-oss-120b \
 		--reasoning-effort high \
-		--request-timeout 420 \
+		--per-problem-time-sec 600 \
+		--force-full-problem-time \
+		--stage-time-reserve-sec 45 \
+		--force-tool-round-for-unverified \
+		--agentic-tool-rounds 5 \
+		--max-code-blocks-per-attempt 6 \
+		--parallel-attempt-workers 4 \
+		--parallel-code-workers 4 \
+		--request-timeout 600 \
 		--client-max-retries 2 \
 		--wait
 
