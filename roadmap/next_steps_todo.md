@@ -1,90 +1,101 @@
-# AIMO3 High-Impact Roadmap (Top 10 Feasible Upgrades)
+# AIMO3 Roadmap: Next 10 Feasible Upgrades
 
-Date: 2026-02-11
+Date: 2026-02-13
 
-Goal: improve solved-count under realistic runtime and cost constraints.
+Goal: maximize leaderboard score while keeping Kaggle submissions reliable and reproducible.
 
-## Implemented Today (Delta)
+Latest targeted failure analysis:
+- `roadmap/gptoss_error_analysis_2026-02-13.md`
+- `roadmap/execution_optimization_ideas_2026-02-13.md`
+- `project_prompts/gptoss120b_execution_playbook.md`
 
-- Added **parallel attempt + tool harness** controls in solver and CLI.
-- Added **10-minute full-budget mode** defaults for `autonomous120b`.
-- Added **uncertainty-triggered escalation stage** before arbitration.
-- Added **`benchmark-sweep` harness** with:
-  - curated trial variants,
-  - leaderboard metrics,
-  - best-trial export + recommended solve command.
-- Added regression coverage for parallel/excalation/CLI sweep behavior.
+## What Is Now In Repo
 
-## 1) Two-pass model cascade (20B -> 120B escalation)
+- Dual orchestrators:
+  - `classic` pipeline (`src/aimo3/solver.py`)
+  - `langgraph` state machine (`src/aimo3/langgraph_solver.py`)
+- Existing Kaggle hardened pipeline remains active (`kaggle-kernel-pipeline` with parquet validation).
+- Proxy/smoke checks available for notebook and local inference harness.
 
-- Why it works: most problems are not equally hard; 120B budget is best spent on uncertain cases.
-- Feasibility: high (existing pipeline already supports model/profile switches).
-- Success metric: same accuracy as pure-120B with >=35% lower token cost, or +1 solved at same cost.
+## Top 10 Next Steps
 
-## 2) Global runtime budget manager
+1. LangGraph parity benchmark vs classic
+- Run both orchestrators on the same reference splits.
+- Keep a single leaderboard artifact with accuracy, fallback rate, and latency.
+- Exit criteria: langgraph >= classic score with <=10% runtime overhead.
 
-- Why it works: avoids over-spending on easy items and under-spending on hard outliers.
-- Feasibility: high (problem complexity + stage controls already exist).
-- Success metric: +1 to +2 solved on reference with equal wall-clock.
+2. Stronger sandbox policy v2
+- Add explicit filesystem isolation policy and denylist for file/network primitives.
+- Add stricter AST checks for indirect import tricks and dynamic attribute chains.
+- Add per-execution memory/time telemetry in debug traces.
 
-## 3) Structured selector rubric (JSON output)
+3. Sandbox runner hardening on Linux/Kaggle
+- Add optional process-level limits (`resource`, `prlimit`) + predictable failure classes.
+- Normalize timeout/error signatures to reduce ambiguous retries.
+- Add deterministic stdout truncation markers.
 
-- Why it works: deterministic scoring beats free-form selector prose for calibration.
-- Feasibility: medium (selector stage already in place).
-- Success metric: improved stability across reruns; reduced answer churn.
+4. Tool quality scoring
+- Score tool outputs by consistency with model rationale and modulus constraints.
+- Downweight noisy tool outputs (multiple unrelated integers, traceback-heavy output).
+- Track per-problem tool trust in debug JSON.
 
-## 4) Modulus confidence and ambiguity handling
+5. Geometry tool micro-kit
+- Add safe helper templates for coordinates, vector dot/cross, circle/power checks.
+- Expose these helpers in prompt policy for geometry category only.
+- Regression pack: geometry-heavy failures from competitor analysis.
 
-- Why it works: wrong modulus silently corrupts otherwise-correct reasoning.
-- Feasibility: high (parser is centralized and already robust).
-- Success metric: 0 modulus-related regressions on reference/adversarial parser suite.
+6. Adaptive budget manager v2
+- Global runtime allocator across problems (easy/medium/hard buckets).
+- Reserve budget for unresolved high-entropy problems late in run.
+- Add hard stop guards to avoid starving final rows.
 
-## 5) Agent checkpoint/restart and replay
+7. Structured selector output
+- Force selector/verifier stages to produce compact JSON schema with confidence.
+- Parse deterministically, reject malformed selector outputs, retry once.
+- Improves reproducibility and reduces answer churn.
 
-- Why it works: long runs fail from API/network timeouts; replay avoids losing progress.
-- Feasibility: medium.
-- Success metric: >=95% completion rate on long 50-problem runs.
+8. Modulus ambiguity resolver
+- Multi-pass modulus extraction with confidence score.
+- If confidence is low, run candidate-modulus checks before final normalization.
+- Add parser stress tests with adversarial wording.
 
-## 6) Geometry micro-toolkit for sandbox
+9. Submission risk gate
+- Pre-submit gate combining:
+  - fallback ratio,
+  - tiny-answer ratio,
+  - unresolved-problem count,
+  - model/tool failure rate.
+- Block low-confidence submissions automatically.
 
-- Why it works: geometry remains highest-variance category.
-- Feasibility: medium (sandbox already supports sympy/numpy).
-- Success metric: geometry subset accuracy delta > +10% relative.
+10. Expanded benchmark suite
+- Build a larger internal benchmark from:
+  - official reference rows,
+  - synthetic AIME-style items,
+  - known failure archetypes,
+  - geometry/number-theory stress sets.
+- Add daily regression command with pass/fail thresholds.
 
-## 7) Extraction torture-test suite (100 cases)
+## Sandbox Hardening Backlog (Detailed)
 
-- Why it works: truncation and malformed final lines still cause silent defaults.
-- Feasibility: high.
-- Success metric: parse-failure rate cut by at least 50% on stress corpus.
+- Add `SandboxPolicy` knobs for:
+  - max AST depth,
+  - max loop nesting,
+  - max imports count,
+  - max temporary file writes (should default to zero).
+- Add deterministic execution transcript object:
+  - code hash,
+  - duration,
+  - memory high-water estimate,
+  - safety checks passed/failed.
+- Add red-team tests for escape attempts:
+  - `__subclasses__` traversals,
+  - dynamic `getattr` chains,
+  - exception-based exfil patterns,
+  - encoded payload attempts.
 
-## 8) Stage-ablation harness with report artifact
+## Immediate Run Plan (Next Session)
 
-- Why it works: fast iteration needs reliable attribution of what helped.
-- Feasibility: high (CLI already has stage toggles).
-- Success metric: one-command report with per-stage marginal gains.
-
-## 9) Submission confidence gate and risk scoring
-
-- Why it works: prevents wasting submissions on clearly unstable outputs.
-- Feasibility: high (debug summary already carries evidence signals).
-- Success metric: lower variance and fewer low-confidence submissions.
-
-## 10) Expanded benchmark pack (AIME-like + failure regressions)
-
-- Why it works: 10-item reference is too small for robust tuning.
-- Feasibility: medium.
-- Success metric: statistically significant config choice over multiple slices.
-
-## Immediate Experiments (Next 72h)
-
-1. `aimo120b` vs `autonomous120b` on full reference with fixed randomization.
-2. `agentic_tool_rounds=2` vs `4` with equal token cap.
-3. cascade strategy: `20B-first + 120B escalation` vs pure `120B`.
-4. selector free-form vs selector structured rubric prototype.
-
-## Implemented Today
-
-- Added bounded autonomous agent loop with iterative tool observation follow-ups.
-- Added stateful Python context across agent rounds.
-- Added `autonomous120b` maximum-budget profile.
-- Updated docs for full execution model and high-budget commands.
+1. `benchmark-reference` with `--orchestrator classic` and `--orchestrator langgraph`.
+2. `benchmark-sweep` to compare high-effort profiles under both orchestrators.
+3. Keep Kaggle notebook preflight only until daily submission window opens.
+4. Submit only if preflight + risk gate are both green.

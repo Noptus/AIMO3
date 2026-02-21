@@ -117,6 +117,7 @@ ALLOWED_IMPORTS = set({escaped_allowed})
 USER_CODE = {escaped_code}
 MAX_OUTPUT_CHARS = {policy.max_output_chars}
 MAX_MEMORY_MB = {policy.max_memory_mb}
+REAL_IMPORT = __import__
 
 if resource is not None:
     try:
@@ -152,14 +153,15 @@ safe_builtins = {{
     "zip": zip,
 }}
 
-# Preload commonly needed math modules into globals.
-globals_dict = {{"__builtins__": safe_builtins, "math": math}}
+def _safe_import(name, globals=None, locals=None, fromlist=(), level=0):
+    top = (name or "").split(".")[0]
+    if top not in ALLOWED_IMPORTS:
+        raise ImportError(f"Import blocked: {{top}}")
+    return REAL_IMPORT(name, globals, locals, fromlist, level)
 
-for module_name in ALLOWED_IMPORTS:
-    try:
-        globals_dict[module_name] = __import__(module_name)
-    except Exception:
-        pass
+safe_builtins["__import__"] = _safe_import
+
+globals_dict = {{"__builtins__": safe_builtins, "math": math}}
 
 stdout_buffer = io.StringIO()
 stderr_buffer = io.StringIO()

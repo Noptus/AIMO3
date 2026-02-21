@@ -12,6 +12,7 @@ data/
 artifacts/
 *.zip
 kaggle.json
+.mcp.json
 *.ipynb_checkpoints
 build/
 dist/

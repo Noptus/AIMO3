@@ -2,6 +2,8 @@ import threading
 import time
 import unittest
 
+import aimo3.solver as solver_module
+from aimo3.sandbox import SandboxResult
 from aimo3.solver import AIMO3Solver, SolverConfig
 
 
@@ -140,7 +142,9 @@ class SolverTests(unittest.TestCase):
         )
         solver = AIMO3Solver(client, config=cfg)
 
-        result = solver.solve("The statement includes 123 explicitly; find the true answer.", problem_id=3)
+        result = solver.solve(
+            "The statement includes 123 explicitly; find the true answer.", problem_id=3
+        )
         self.assertEqual(result.predicted_answer, 456)
 
     def test_geometry_recheck_stage_influences_pick(self) -> None:
@@ -162,7 +166,9 @@ class SolverTests(unittest.TestCase):
         )
         solver = AIMO3Solver(client, config=cfg)
 
-        result = solver.solve("In triangle ABC with circumcircle and tangent lines, find the integer.", problem_id=4)
+        result = solver.solve(
+            "In triangle ABC with circumcircle and tangent lines, find the integer.", problem_id=4
+        )
         self.assertEqual(result.predicted_answer, 222)
         self.assertEqual(result.debug_summary["geometry_recheck_candidates"], 1)
 
@@ -535,6 +541,154 @@ class SolverTests(unittest.TestCase):
         self.assertEqual(result.predicted_answer, 20)
         self.assertEqual(result.debug_summary["candidate_count"], 2)
         self.assertEqual(result.debug_summary["escalation_candidates"], 1)
+
+    def test_stage_time_reserve_holds_attempt_cushion_for_downstream(self) -> None:
+        client = SlowClient("Reasoning. FINAL_ANSWER: 42", delay_sec=0.2)
+        cfg = SolverConfig(
+            attempts=3,
+            temperatures=(0.2,),
+            per_problem_time_sec=0.32,
+            min_time_for_attempt_sec=0.1,
+            min_time_for_stage_sec=0.0,
+            stage_time_reserve_sec=0.15,
+            verification_attempts=0,
+            consistency_audit_attempts=0,
+            adversarial_probe_attempts=0,
+            geometry_recheck_attempts=0,
+            small_answer_guard_attempts=0,
+            fallback_guess_attempts=0,
+            selector_attempts=1,
+            sparse_recovery_attempts=0,
+            escalation_attempts=0,
+        )
+        solver = AIMO3Solver(client, config=cfg)
+
+        result = solver.solve("Compute the final integer answer.", problem_id=19)
+        self.assertEqual(result.predicted_answer, 42)
+        # The second attempt should be blocked to preserve stage budget.
+        initial_candidates = [c for c in result.candidates if c.stage == "initial"]
+        self.assertEqual(len(initial_candidates), 1)
+        self.assertEqual(client.calls, 1)
+
+    def test_parallel_initial_batch_is_throttled_under_stage_reserve(self) -> None:
+        client = SlowClient("Reasoning. FINAL_ANSWER: 42", delay_sec=0.15)
+        cfg = SolverConfig(
+            attempts=4,
+            temperatures=(0.2,),
+            parallel_attempt_workers=4,
+            per_problem_time_sec=0.45,
+            min_time_for_attempt_sec=0.1,
+            min_time_for_stage_sec=0.1,
+            stage_time_reserve_sec=0.2,
+            verification_attempts=0,
+            consistency_audit_attempts=0,
+            adversarial_probe_attempts=0,
+            geometry_recheck_attempts=0,
+            small_answer_guard_attempts=0,
+            fallback_guess_attempts=0,
+            selector_attempts=1,
+            sparse_recovery_attempts=0,
+            escalation_attempts=0,
+        )
+        solver = AIMO3Solver(client, config=cfg)
+
+        result = solver.solve("Compute the final integer answer.", problem_id=20)
+        self.assertEqual(result.predicted_answer, 42)
+        initial_candidates = [c for c in result.candidates if c.stage == "initial"]
+        self.assertEqual(len(initial_candidates), 1)
+        self.assertEqual(client.calls, 1)
+
+    def test_repeated_code_blocks_use_sandbox_cache(self) -> None:
+        responses = [
+            "```python\nprint(7)\n```\nFINAL_ANSWER: 7",
+            "```python\nprint(7)\n```\nFINAL_ANSWER: 7",
+        ]
+        client = DummyClient(responses)
+        cfg = SolverConfig(
+            attempts=2,
+            temperatures=(0.2,),
+            early_stop_attempt=99,
+            verification_attempts=0,
+            consistency_audit_attempts=0,
+            adversarial_probe_attempts=0,
+            geometry_recheck_attempts=0,
+            small_answer_guard_attempts=0,
+            fallback_guess_attempts=0,
+            selector_attempts=0,
+            sparse_recovery_attempts=0,
+            agentic_tool_rounds=0,
+        )
+        solver = AIMO3Solver(client, config=cfg)
+
+        calls = {"n": 0}
+        original_execute = solver_module.execute_python
+
+        def fake_execute(code, policy=None):
+            calls["n"] += 1
+            return SandboxResult(
+                success=True,
+                stdout="7\n",
+                stderr="",
+                error=None,
+                exception_type=None,
+                duration_sec=0.01,
+            )
+
+        solver_module.execute_python = fake_execute
+        try:
+            result = solver.solve("Find x modulo 100000", problem_id=21)
+        finally:
+            solver_module.execute_python = original_execute
+
+        self.assertEqual(result.predicted_answer, 7)
+        self.assertEqual(calls["n"], 1)
+
+    def test_mandatory_code_attempt_downweights_text_only_candidate(self) -> None:
+        responses = [
+            "Reasoning only. FINAL_ANSWER: 7",
+            '```python\nprint(42)\n```\nRESULT_JSON: {"answer": 42, "method": "quick-check", "independent_check_passed": true}\nFINAL_ANSWER: 42',
+        ]
+        client = DummyClient(responses)
+        cfg = SolverConfig(
+            attempts=2,
+            temperatures=(0.2,),
+            early_stop_attempt=99,
+            mandatory_code_attempts=1,
+            agentic_tool_rounds=0,
+            verification_attempts=0,
+            consistency_audit_attempts=0,
+            adversarial_probe_attempts=0,
+            geometry_recheck_attempts=0,
+            small_answer_guard_attempts=0,
+            fallback_guess_attempts=0,
+            selector_attempts=0,
+            sparse_recovery_attempts=0,
+        )
+        solver = AIMO3Solver(client, config=cfg)
+        result = solver.solve("Find the integer answer.", problem_id=22)
+        self.assertEqual(result.predicted_answer, 42)
+        self.assertGreaterEqual(result.debug_summary["independent_check_candidates"], 1)
+
+    def test_mini_solver_handles_simple_expression(self) -> None:
+        client = DummyClient(["Reasoning. FINAL_ANSWER: 99"])
+        cfg = SolverConfig(
+            attempts=0,
+            temperatures=(0.2,),
+            verification_attempts=0,
+            consistency_audit_attempts=0,
+            adversarial_probe_attempts=0,
+            geometry_recheck_attempts=0,
+            small_answer_guard_attempts=0,
+            fallback_guess_attempts=0,
+            selector_attempts=0,
+            sparse_recovery_attempts=0,
+            mini_solver_enabled=True,
+            mini_solver_min_confidence=0.9,
+        )
+        solver = AIMO3Solver(client, config=cfg)
+        result = solver.solve("What is 0*10?", problem_id=23)
+        self.assertEqual(result.predicted_answer, 0)
+        self.assertGreaterEqual(result.debug_summary["mini_solver_candidates"], 1)
 
 
 if __name__ == "__main__":

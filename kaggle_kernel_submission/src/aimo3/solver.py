@@ -10,11 +10,13 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .client import ChatClient
+from .mini_solvers import run_mini_solvers
 from .parsing import (
     extract_python_blocks,
     parse_answer_from_text,
     parse_integer_from_stdout,
     parse_modulus,
+    parse_structured_result,
 )
 from .prompts import (
     ProblemProfile,
@@ -23,6 +25,7 @@ from .prompts import (
     build_consistency_audit_prompt,
     build_fallback_guess_prompt,
     build_final_extractor_prompt,
+    build_forced_code_check_prompt,
     build_geometry_recheck_prompt,
     build_prompt,
     build_repair_prompt,
@@ -110,6 +113,16 @@ class SolverConfig:
     escalation_trigger_ratio: float = 0.72
     escalation_min_valid: int = 3
 
+    # Structured output + mandatory executable validation.
+    mandatory_code_attempts: int = 0
+
+    # Deterministic mini-solvers for trivial/high-confidence sub-cases.
+    mini_solver_enabled: bool = True
+    mini_solver_min_confidence: float = 0.95
+
+    # Additional strictness for 0/1 collapse.
+    strict_zero_one_policy: bool = True
+
 
 @dataclass(frozen=True)
 class SolveBudget:
@@ -139,6 +152,9 @@ class Candidate:
     sandbox_errors: list[str] = field(default_factory=list)
     generation_error: str | None = None
     answer_in_problem: bool = False
+    method: str = ""
+    independent_check_passed: bool = False
+    missing_forced_code_check: bool = False
 
     @property
     def score(self) -> float:
@@ -150,7 +166,9 @@ class Candidate:
             base += 1.0
 
         if self.answer_source in {"final_answer_tag", "boxed"}:
-            base += 0.6
+            base += 0.44
+        elif self.answer_source == "structured_json":
+            base += 0.78
         elif self.answer_source == "verifier":
             base += 0.8
         elif self.answer_source == "consistency_audit":
@@ -167,11 +185,15 @@ class Candidate:
             base += 0.18
         elif self.answer_source == "selector":
             base += 1.0
+        elif self.answer_source == "mini_solver":
+            base += 1.25
 
         if self.code_verified:
             base += 2.2
         elif self.code_answers:
             base += 0.5
+        if self.independent_check_passed:
+            base += 0.55
 
         if self.repair_used:
             base += 0.2
@@ -190,6 +212,16 @@ class Candidate:
 
         if self.answer_in_problem:
             base -= 0.12
+
+        if self.missing_forced_code_check:
+            base -= 0.85
+
+        if (
+            self.answer_source in {"final_answer_tag", "boxed", "answer_line"}
+            and not self.code_verified
+            and not self.independent_check_passed
+        ):
+            base -= 0.35
 
         base -= min(0.5, 0.2 * len(self.sandbox_errors))
         return max(base, 0.01)
@@ -216,16 +248,31 @@ class SolveResult:
             "candidate_count": len(self.candidates),
             "top_votes": votes.most_common(5),
             "verified_candidates": sum(1 for c in self.candidates if c.code_verified),
+            "independent_check_candidates": sum(
+                1 for c in self.candidates if c.independent_check_passed
+            ),
             "agentic_candidates": sum(1 for c in self.candidates if c.agent_rounds > 0),
             "max_agent_rounds": max((c.agent_rounds for c in self.candidates), default=0),
             "repair_candidates": sum(1 for c in self.candidates if c.repair_used),
             "extractor_candidates": sum(1 for c in self.candidates if c.extractor_used),
+            "mini_solver_candidates": sum(1 for c in self.candidates if c.stage == "mini_solver"),
+            "forced_code_missing_candidates": sum(
+                1 for c in self.candidates if c.missing_forced_code_check
+            ),
             "verifier_candidates": sum(1 for c in self.candidates if c.stage == "verifier"),
-            "consistency_audit_candidates": sum(1 for c in self.candidates if c.stage == "consistency_audit"),
-            "adversarial_probe_candidates": sum(1 for c in self.candidates if c.stage == "adversarial_probe"),
-            "geometry_recheck_candidates": sum(1 for c in self.candidates if c.stage == "geometry_recheck"),
+            "consistency_audit_candidates": sum(
+                1 for c in self.candidates if c.stage == "consistency_audit"
+            ),
+            "adversarial_probe_candidates": sum(
+                1 for c in self.candidates if c.stage == "adversarial_probe"
+            ),
+            "geometry_recheck_candidates": sum(
+                1 for c in self.candidates if c.stage == "geometry_recheck"
+            ),
             "small_guard_candidates": sum(1 for c in self.candidates if c.stage == "small_guard"),
-            "fallback_guess_candidates": sum(1 for c in self.candidates if c.stage == "fallback_guess"),
+            "fallback_guess_candidates": sum(
+                1 for c in self.candidates if c.stage == "fallback_guess"
+            ),
             "selector_candidates": sum(1 for c in self.candidates if c.stage == "selector"),
             "escalation_candidates": sum(1 for c in self.candidates if c.stage == "escalation"),
             "problem_number_hits": sum(1 for c in self.candidates if c.answer_in_problem),
@@ -245,21 +292,37 @@ class AIMO3Solver:
         self.client = client
         self.config = config or SolverConfig()
         self.sandbox_policy = sandbox_policy or SandboxPolicy()
+        self._sandbox_cache: dict[str, Any] = {}
 
     def solve(self, problem_text: str, problem_id: Any = None) -> SolveResult:
+        # Per-problem sandbox cache for repeated code blocks across attempts/stages.
+        self._sandbox_cache = {}
         modulus = parse_modulus(problem_text)
         profile = estimate_problem_profile(problem_text)
         budget = self._build_budget(profile)
         problem_numbers = self._extract_problem_numbers(problem_text)
         deadline = self._problem_deadline()
 
-        candidates = self._run_initial_attempts(
-            problem_text=problem_text,
-            modulus=modulus,
-            profile=profile,
-            budget=budget,
-            problem_numbers=problem_numbers,
-            deadline=deadline,
+        candidates: list[Candidate] = []
+        if self.config.mini_solver_enabled:
+            candidates.extend(
+                self._run_mini_solver_candidates(
+                    problem_text=problem_text,
+                    modulus=modulus,
+                    profile=profile,
+                    problem_numbers=problem_numbers,
+                )
+            )
+
+        candidates.extend(
+            self._run_initial_attempts(
+                problem_text=problem_text,
+                modulus=modulus,
+                profile=profile,
+                budget=budget,
+                problem_numbers=problem_numbers,
+                deadline=deadline,
+            )
         )
 
         if self._has_time(deadline, self.config.min_time_for_attempt_sec):
@@ -389,6 +452,39 @@ class AIMO3Solver:
             candidates=candidates,
         )
 
+    def _run_mini_solver_candidates(
+        self,
+        *,
+        problem_text: str,
+        modulus: int | None,
+        profile: ProblemProfile,
+        problem_numbers: set[int],
+    ) -> list[Candidate]:
+        staged: list[Candidate] = []
+        for idx, solved in enumerate(run_mini_solvers(problem_text, modulus=modulus)):
+            if solved.confidence < float(self.config.mini_solver_min_confidence):
+                continue
+            staged.append(
+                Candidate(
+                    attempt=-10_000 - idx,
+                    temperature=0.0,
+                    response_text=solved.reason,
+                    answer=solved.answer,
+                    answer_source="mini_solver",
+                    modulus=modulus,
+                    category=profile.category,
+                    archetype=profile.archetype,
+                    complexity=profile.complexity,
+                    stage="mini_solver",
+                    code_blocks=1,
+                    code_verified=True,
+                    method=solved.method,
+                    independent_check_passed=bool(solved.independent_check_passed),
+                    answer_in_problem=bool(solved.answer in problem_numbers),
+                )
+            )
+        return staged
+
     def _build_budget(self, profile: ProblemProfile) -> SolveBudget:
         attempts = self.config.attempts
         max_tokens = self.config.max_tokens
@@ -405,11 +501,15 @@ class AIMO3Solver:
             allow_early_stop = False
         elif self.config.adaptive_complexity and profile.complexity == "medium":
             attempts = max(attempts, min(self.config.hard_attempts, self.config.attempts + 2))
-            max_tokens = max(max_tokens, min(self.config.hard_max_tokens, self.config.max_tokens + 256))
+            max_tokens = max(
+                max_tokens, min(self.config.hard_max_tokens, self.config.max_tokens + 256)
+            )
 
         if self.config.adaptive_complexity and profile.category == "geometry":
             attempts = max(attempts, min(self.config.hard_attempts, self.config.attempts + 2))
-            max_tokens = max(max_tokens, min(self.config.hard_max_tokens, self.config.max_tokens + 512))
+            max_tokens = max(
+                max_tokens, min(self.config.hard_max_tokens, self.config.max_tokens + 512)
+            )
             if profile.complexity != "easy":
                 allow_early_stop = False
 
@@ -447,14 +547,55 @@ class AIMO3Solver:
             ]
         )
 
-    def _should_hold_stage_reserve(self, deadline: float | None) -> bool:
+    def _active_downstream_stage_count(self) -> int:
+        count = 0
+        if self.config.verification_attempts > 0:
+            count += 1
+        if self.config.sparse_recovery_attempts > 0:
+            count += 1
+        if self.config.consistency_audit_attempts > 0:
+            count += 1
+        if self.config.adversarial_probe_attempts > 0:
+            count += 1
+        if self.config.geometry_recheck_attempts > 0:
+            count += 1
+        if self.config.small_answer_guard_attempts > 0:
+            count += 1
+        if self.config.selector_attempts > 0:
+            count += 1
+        if self.config.fallback_guess_attempts > 0:
+            count += 1
+        if self.config.escalation_attempts > 0:
+            count += 1
+        return count
+
+    def _should_hold_stage_reserve(
+        self,
+        deadline: float | None,
+        *,
+        launching_new_attempt: bool = False,
+    ) -> bool:
         if deadline is None:
             return False
         if self.config.stage_time_reserve_sec <= 0:
             return False
         if not self._downstream_stages_enabled():
             return False
-        return self._remaining_time(deadline) <= float(self.config.stage_time_reserve_sec)
+        reserve = float(self.config.stage_time_reserve_sec)
+        # When launching another expensive attempt, hold extra cushion so downstream
+        # arbitration stages still get wall-clock time.
+        if launching_new_attempt:
+            reserve += float(max(0, self.config.min_time_for_attempt_sec))
+            # Also preserve a minimum downstream-stage floor for at least a few
+            # arbitration stages (verifier/selector/guards) instead of starving them.
+            stage_floor = min(2, self._active_downstream_stage_count())
+            reserve += float(max(0, self.config.min_time_for_stage_sec)) * float(stage_floor)
+
+        # Avoid pathological over-reserving when per-problem budget is modest.
+        if self.config.per_problem_time_sec >= 30:
+            reserve_cap = max(0.0, float(self.config.per_problem_time_sec) * 0.58)
+            reserve = min(reserve, reserve_cap)
+        return self._remaining_time(deadline) <= reserve
 
     def _needs_escalation(self, candidates: list[Candidate]) -> bool:
         if self.config.escalation_attempts <= 0:
@@ -478,7 +619,14 @@ class AIMO3Solver:
             c.answer == top_answer
             and (
                 c.code_verified
-                or c.stage in {"verifier", "consistency_audit", "adversarial_probe", "geometry_recheck", "selector"}
+                or c.stage
+                in {
+                    "verifier",
+                    "consistency_audit",
+                    "adversarial_probe",
+                    "geometry_recheck",
+                    "selector",
+                }
             )
             for c in valid
         )
@@ -497,15 +645,32 @@ class AIMO3Solver:
         problem_numbers: set[int],
         deadline: float | None,
     ) -> list[Candidate]:
+        def should_hold_after_minimum(candidates_so_far: list[Candidate]) -> bool:
+            # On realistic competition budgets, require at least two initial attempts
+            # before stage-reserve throttling kicks in.
+            if self.config.per_problem_time_sec >= 30:
+                initial_so_far = sum(1 for c in candidates_so_far if c.stage == "initial")
+                if initial_so_far < 2:
+                    return False
+            return True
+
         workers = max(1, int(self.config.parallel_attempt_workers))
         if workers <= 1:
             candidates: list[Candidate] = []
             for attempt in range(budget.attempts):
                 if not self._has_time(deadline, self.config.min_time_for_attempt_sec):
                     break
-                if candidates and self._should_hold_stage_reserve(deadline):
+                if (
+                    candidates
+                    and self._should_hold_stage_reserve(
+                        deadline,
+                        launching_new_attempt=True,
+                    )
+                    and should_hold_after_minimum(candidates)
+                ):
                     break
                 temp = self.config.temperatures[attempt % len(self.config.temperatures)]
+                force_code_first = attempt < max(0, int(self.config.mandatory_code_attempts))
                 candidate = self._run_attempt(
                     problem_text=problem_text,
                     modulus=modulus,
@@ -514,6 +679,7 @@ class AIMO3Solver:
                     temperature=temp,
                     max_tokens=budget.max_tokens,
                     problem_numbers=problem_numbers,
+                    force_code_first=force_code_first,
                     deadline=deadline,
                 )
                 candidates.append(candidate)
@@ -530,20 +696,44 @@ class AIMO3Solver:
         while next_attempt < budget.attempts:
             if not self._has_time(deadline, self.config.min_time_for_attempt_sec):
                 break
-            if candidates and self._should_hold_stage_reserve(deadline):
+            if (
+                candidates
+                and self._should_hold_stage_reserve(
+                    deadline,
+                    launching_new_attempt=True,
+                )
+                and should_hold_after_minimum(candidates)
+            ):
                 break
 
             batch_size = min(workers, budget.attempts - next_attempt)
+            if (
+                deadline is not None
+                and not candidates
+                and self.config.stage_time_reserve_sec > 0
+                and self._downstream_stages_enabled()
+            ):
+                # Under strict per-problem deadlines, run the first attempt alone so
+                # we do not consume stage budget with an initial parallel burst.
+                batch_size = 1
             futures = {}
             with ThreadPoolExecutor(max_workers=batch_size) as pool:
                 for _ in range(batch_size):
                     if not self._has_time(deadline, self.config.min_time_for_attempt_sec):
                         break
-                    if candidates and self._should_hold_stage_reserve(deadline):
+                    if (
+                        candidates
+                        and self._should_hold_stage_reserve(
+                            deadline,
+                            launching_new_attempt=True,
+                        )
+                        and should_hold_after_minimum(candidates)
+                    ):
                         break
                     attempt = next_attempt
                     next_attempt += 1
                     temp = self.config.temperatures[attempt % len(self.config.temperatures)]
+                    force_code_first = attempt < max(0, int(self.config.mandatory_code_attempts))
                     future = pool.submit(
                         self._run_attempt,
                         problem_text=problem_text,
@@ -553,6 +743,7 @@ class AIMO3Solver:
                         temperature=temp,
                         max_tokens=budget.max_tokens,
                         problem_numbers=problem_numbers,
+                        force_code_first=force_code_first,
                         deadline=deadline,
                     )
                     futures[future] = (attempt, temp)
@@ -633,6 +824,7 @@ class AIMO3Solver:
         temperature: float,
         max_tokens: int,
         problem_numbers: set[int],
+        force_code_first: bool = False,
         deadline: float | None = None,
     ) -> Candidate:
         if not self._has_time(deadline, self.config.min_time_for_attempt_sec):
@@ -655,6 +847,7 @@ class AIMO3Solver:
             modulus=modulus,
             profile=profile,
             hard_mode=self.config.hard_mode,
+            force_code_first=force_code_first,
         )
 
         try:
@@ -685,11 +878,20 @@ class AIMO3Solver:
         answer: int | None = None
         answer_source = "none"
         parsed = parse_answer_from_text(response_text, modulus=modulus)
+        structured = parse_structured_result(response_text, modulus=modulus)
+        method = structured.method
+        independent_check_passed = bool(structured.independent_check_passed)
         agent_rounds_used = 0
 
         def refresh_from_response(text: str) -> tuple[list[int], list[str], int]:
             nonlocal answer, answer_source, code_blocks_count, parsed, python_state
+            nonlocal method, independent_check_passed
             parsed = parse_answer_from_text(text, modulus=modulus)
+            structured_local = parse_structured_result(text, modulus=modulus)
+            if structured_local.method:
+                method = structured_local.method
+            if structured_local.independent_check_passed:
+                independent_check_passed = True
             phase_answer = parsed.answer
             phase_answers, phase_errors, phase_blocks, python_state = self._evaluate_code_blocks(
                 text,
@@ -699,6 +901,8 @@ class AIMO3Solver:
             code_answers.extend(phase_answers)
             sandbox_errors.extend(phase_errors)
             code_blocks_count += phase_blocks
+            if phase_answers:
+                independent_check_passed = True
 
             if phase_answer is not None:
                 answer = phase_answer
@@ -710,6 +914,29 @@ class AIMO3Solver:
             return phase_answers, phase_errors, phase_blocks
 
         phase_answers, phase_errors, phase_blocks = refresh_from_response(response_text)
+
+        if (
+            force_code_first
+            and not code_answers
+            and self._has_time(deadline, self.config.min_time_for_stage_sec)
+        ):
+            forced_check_prompt = build_forced_code_check_prompt(
+                problem_text,
+                previous_response=self._trim_for_prompt(response_text),
+                modulus=modulus,
+                profile=profile,
+            )
+            try:
+                response_text = self.client.generate(
+                    system_prompt=forced_check_prompt.system,
+                    user_prompt=forced_check_prompt.user,
+                    temperature=min(max(temperature, 0.08), 0.2),
+                    max_tokens=max(320, max_tokens // 2),
+                )
+                agent_rounds_used += 1
+                phase_answers, phase_errors, phase_blocks = refresh_from_response(response_text)
+            except Exception as exc:
+                sandbox_errors.append(f"forced_code_check_generation_error: {exc}")
 
         for round_idx in range(self.config.agentic_tool_rounds):
             if not self._has_time(deadline, self.config.min_time_for_stage_sec):
@@ -783,10 +1010,12 @@ class AIMO3Solver:
             parsed = parse_answer_from_text(response_text, modulus=modulus)
             answer = parsed.answer
             answer_source = parsed.source
-            extra_answers, extra_errors, extra_code_blocks, python_state = self._evaluate_code_blocks(
-                response_text,
-                modulus,
-                stateful_prefix=python_state,
+            extra_answers, extra_errors, extra_code_blocks, python_state = (
+                self._evaluate_code_blocks(
+                    response_text,
+                    modulus,
+                    stateful_prefix=python_state,
+                )
             )
             code_answers.extend(extra_answers)
             sandbox_errors.extend(extra_errors)
@@ -824,6 +1053,7 @@ class AIMO3Solver:
             answer_source = parsed.source
 
         code_verified = bool(answer is not None and code_answers and answer in code_answers)
+        missing_forced_code_check = bool(force_code_first and not code_answers)
 
         return Candidate(
             attempt=attempt,
@@ -844,6 +1074,9 @@ class AIMO3Solver:
             code_answers=code_answers,
             sandbox_errors=sandbox_errors,
             answer_in_problem=bool(answer is not None and answer in problem_numbers),
+            method=method,
+            independent_check_passed=independent_check_passed or code_verified,
+            missing_forced_code_check=missing_forced_code_check,
         )
 
     def _evaluate_code_blocks(
@@ -867,7 +1100,9 @@ class AIMO3Solver:
         if can_parallel_stateless:
             workers = min(len(selected_blocks), max(1, int(self.config.parallel_code_workers)))
             with ThreadPoolExecutor(max_workers=workers) as pool:
-                futures = [pool.submit(execute_python, block, policy=self.sandbox_policy) for block in selected_blocks]
+                futures = [
+                    pool.submit(self._execute_python_cached, block) for block in selected_blocks
+                ]
                 for future in futures:
                     try:
                         run = future.result()
@@ -886,7 +1121,7 @@ class AIMO3Solver:
             executable = block
             if prefix:
                 executable = prefix + "\n\n" + block
-            run = execute_python(executable, policy=self.sandbox_policy)
+            run = self._execute_python_cached(executable)
             if run.success:
                 code_answer = parse_integer_from_stdout(run.stdout, modulus=modulus)
                 if code_answer is not None:
@@ -899,6 +1134,21 @@ class AIMO3Solver:
                 sandbox_errors.append(run.error)
 
         return code_answers, sandbox_errors, len(code_blocks), prefix
+
+    def _execute_python_cached(self, executable: str):
+        cached = self._sandbox_cache.get(executable)
+        if cached is not None:
+            return cached
+        run = execute_python(executable, policy=self.sandbox_policy)
+        if len(self._sandbox_cache) >= 512:
+            # Cheap FIFO-ish eviction based on insertion order.
+            try:
+                first_key = next(iter(self._sandbox_cache))
+                self._sandbox_cache.pop(first_key, None)
+            except Exception:
+                self._sandbox_cache = {}
+        self._sandbox_cache[executable] = run
+        return run
 
     def _needs_repair(self, answer: int | None, code_answers: list[int]) -> bool:
         if answer is None:
@@ -997,7 +1247,7 @@ class AIMO3Solver:
             return []
 
         distinct = self._top_distinct_candidates(candidates, self.config.verification_top_k)
-        if len(distinct) < 2:
+        if len(distinct) < 1:
             return []
 
         candidate_answers = [c.answer for c in distinct if c.answer is not None]
@@ -1063,6 +1313,7 @@ class AIMO3Solver:
                     stage="verifier",
                     code_blocks=0,
                     code_verified=False,
+                    independent_check_passed=bool(answer is not None),
                     answer_in_problem=bool(answer is not None and answer in problem_numbers),
                 )
             )
@@ -1152,6 +1403,7 @@ class AIMO3Solver:
                     stage="consistency_audit",
                     code_blocks=0,
                     code_verified=False,
+                    independent_check_passed=bool(answer is not None),
                     answer_in_problem=bool(answer is not None and answer in problem_numbers),
                 )
             )
@@ -1237,6 +1489,7 @@ class AIMO3Solver:
                     stage="adversarial_probe",
                     code_blocks=0,
                     code_verified=False,
+                    independent_check_passed=bool(answer is not None),
                     answer_in_problem=bool(answer is not None and answer in problem_numbers),
                 )
             )
@@ -1258,7 +1511,10 @@ class AIMO3Solver:
 
         strong_support = any(
             c.answer == top_answer
-            and (c.code_verified or c.stage in {"verifier", "consistency_audit", "geometry_recheck", "selector"})
+            and (
+                c.code_verified
+                or c.stage in {"verifier", "consistency_audit", "geometry_recheck", "selector"}
+            )
             for c in valid
         )
 
@@ -1358,6 +1614,7 @@ class AIMO3Solver:
                     stage="geometry_recheck",
                     code_blocks=0,
                     code_verified=False,
+                    independent_check_passed=bool(answer is not None),
                     answer_in_problem=bool(answer is not None and answer in problem_numbers),
                 )
             )
@@ -1442,6 +1699,7 @@ class AIMO3Solver:
                     stage="small_guard",
                     code_blocks=0,
                     code_verified=False,
+                    independent_check_passed=bool(answer is not None and answer not in {0, 1}),
                     answer_in_problem=bool(answer is not None and answer in problem_numbers),
                 )
             )
@@ -1464,9 +1722,17 @@ class AIMO3Solver:
         small_ratio = small_count / max(1, len(answers))
 
         top_has_strong_evidence = any(
-            c.answer == top_answer and (
+            c.answer == top_answer
+            and (
                 c.code_verified
-                or c.stage in {"verifier", "consistency_audit", "adversarial_probe", "geometry_recheck", "selector"}
+                or c.stage
+                in {
+                    "verifier",
+                    "consistency_audit",
+                    "adversarial_probe",
+                    "geometry_recheck",
+                    "selector",
+                }
             )
             for c in valid
         )
@@ -1477,7 +1743,14 @@ class AIMO3Solver:
         if top_answer in {0, 1} and not top_has_strong_evidence and top_ratio < 0.95:
             return True
 
-        return small_ratio >= 0.7
+        if (
+            self.config.strict_zero_one_policy
+            and top_answer in {0, 1}
+            and not top_has_strong_evidence
+        ):
+            return True
+
+        return small_ratio >= 0.6
 
     def _run_fallback_guess(
         self,
@@ -1552,6 +1825,7 @@ class AIMO3Solver:
                     stage="fallback_guess",
                     code_blocks=0,
                     code_verified=False,
+                    independent_check_passed=False,
                     answer_in_problem=bool(answer is not None and answer in problem_numbers),
                 )
             )
@@ -1576,7 +1850,13 @@ class AIMO3Solver:
             and (
                 c.code_verified
                 or c.stage
-                in {"verifier", "consistency_audit", "adversarial_probe", "geometry_recheck", "selector"}
+                in {
+                    "verifier",
+                    "consistency_audit",
+                    "adversarial_probe",
+                    "geometry_recheck",
+                    "selector",
+                }
             )
             for c in valid
         )
@@ -1667,6 +1947,7 @@ class AIMO3Solver:
                     stage="selector",
                     code_blocks=0,
                     code_verified=False,
+                    independent_check_passed=bool(answer is not None),
                     answer_in_problem=bool(answer is not None and answer in problem_numbers),
                 )
             )
@@ -1735,6 +2016,7 @@ class AIMO3Solver:
 
         support = len(matching)
         verified = sum(1 for c in matching if c.code_verified)
+        independent = sum(1 for c in matching if c.independent_check_passed)
         agent_rounds = sum(c.agent_rounds for c in matching)
         verifier_votes = sum(1 for c in matching if c.stage == "verifier")
         audit_votes = sum(1 for c in matching if c.stage == "consistency_audit")
@@ -1751,11 +2033,13 @@ class AIMO3Solver:
                 snippet += "..."
             snippets.append(
                 f"trace{idx}: stage={candidate.stage} source={candidate.answer_source} "
+                f"independent={candidate.independent_check_passed} method={candidate.method or 'n/a'} "
                 f"score={candidate.score:.2f} snippet={snippet}"
             )
 
         stats = (
             f"support={support} code_verified={verified} "
+            f"independent_checks={independent} "
             f"verifier_votes={verifier_votes} audit_votes={audit_votes} "
             f"probe_votes={probe_votes} selector_votes={selector_votes} "
             f"agent_rounds={agent_rounds} max_score={max_score:.2f}"
@@ -1781,13 +2065,42 @@ class AIMO3Solver:
 
         top_answer, count = Counter(answers).most_common(1)[0]
         ratio = count / max(1, len(answers))
+        top_has_strong_evidence = any(
+            c.answer == top_answer
+            and (
+                c.code_verified
+                or c.independent_check_passed
+                or c.stage
+                in {
+                    "verifier",
+                    "consistency_audit",
+                    "adversarial_probe",
+                    "geometry_recheck",
+                    "selector",
+                }
+            )
+            for c in candidates
+        )
+
         if count >= self.config.min_consensus and ratio >= self.config.early_stop_ratio:
+            if (
+                self.config.strict_zero_one_policy
+                and top_answer in {0, 1}
+                and not top_has_strong_evidence
+            ):
+                return False
             return True
 
-        verified_count = sum(1 for c in candidates if c.code_verified and c.answer == top_answer)
+        verified_count = sum(
+            1
+            for c in candidates
+            if (c.code_verified or c.independent_check_passed) and c.answer == top_answer
+        )
         return verified_count >= 2 and ratio >= 0.6
 
-    def _aggregate(self, candidates: list[Candidate], modulus: int | None, problem_numbers: set[int]) -> int:
+    def _aggregate(
+        self, candidates: list[Candidate], modulus: int | None, problem_numbers: set[int]
+    ) -> int:
         stats: dict[int, dict[str, Any]] = {}
         for candidate in candidates:
             if candidate.answer is None:
@@ -1804,14 +2117,30 @@ class AIMO3Solver:
                     "geometry_votes": 0.0,
                     "guard_votes": 0.0,
                     "selector_votes": 0.0,
+                    "independent": 0.0,
+                    "forced_missing": 0.0,
+                    "text_only_unverified": 0.0,
                     "stages": set(),
+                    "sources": set(),
                 },
             )
             row["score"] += candidate.score
             row["count"] += 1.0
             row["stages"].add(candidate.stage)
+            row["sources"].add(candidate.answer_source)
             if candidate.code_verified:
                 row["verified"] += 1.0
+            if candidate.independent_check_passed:
+                row["independent"] += 1.0
+            if candidate.missing_forced_code_check:
+                row["forced_missing"] += 1.0
+            if (
+                candidate.answer_source
+                in {"final_answer_tag", "boxed", "answer_line", "plain_integer"}
+                and not candidate.code_verified
+                and not candidate.independent_check_passed
+            ):
+                row["text_only_unverified"] += 1.0
             if candidate.stage == "verifier":
                 row["verifier_votes"] += 1.0
             if candidate.stage == "consistency_audit":
@@ -1828,8 +2157,9 @@ class AIMO3Solver:
         if not stats:
             return self.config.default_answer
 
+        ranked_answers: dict[int, tuple[Any, ...]] = {}
         best_answer = self.config.default_answer
-        best_key: tuple[float, float, float, float, int] | None = None
+        best_key: tuple[Any, ...] | None = None
 
         for answer, row in stats.items():
             total_score = row["score"]
@@ -1840,20 +2170,30 @@ class AIMO3Solver:
             total_score += 0.4 * row["geometry_votes"]
             total_score += 0.45 * row["guard_votes"]
             total_score += 0.5 * row["selector_votes"]
+            total_score += 0.55 * min(row["independent"], 4.0)
             stage_diversity = max(0.0, float(len(row["stages"]) - 1))
             total_score += 0.12 * min(4.0, stage_diversity)
+            source_diversity = max(0.0, float(len(row["sources"]) - 1))
+            total_score += 0.08 * min(4.0, source_diversity)
+            total_score -= 0.28 * min(4.0, row["text_only_unverified"])
+            total_score -= 0.35 * min(4.0, row["forced_missing"])
 
             if 0 <= answer <= 9:
                 total_score -= 0.25
-            if answer in {0, 1} and (
-                row["verified"]
-                + row["verifier_votes"]
-                + row["audit_votes"]
-                + row["probe_votes"]
-                + row["geometry_votes"]
-                + row["selector_votes"]
-            ) <= 0:
-                total_score -= 0.7
+            if (
+                answer in {0, 1}
+                and (
+                    row["verified"]
+                    + row["independent"]
+                    + row["verifier_votes"]
+                    + row["audit_votes"]
+                    + row["probe_votes"]
+                    + row["geometry_votes"]
+                    + row["selector_votes"]
+                )
+                <= 0
+            ):
+                total_score -= 1.4
             if row["stages"] == {"fallback_guess"}:
                 total_score -= 0.2
             if answer in problem_numbers:
@@ -1861,18 +2201,39 @@ class AIMO3Solver:
 
             rank_key = (
                 total_score,
+                row["independent"],
+                row["verified"],
                 row["selector_votes"],
                 row["guard_votes"],
                 row["audit_votes"],
                 row["probe_votes"],
                 row["geometry_votes"],
-                row["verified"],
                 row["count"],
                 answer,
             )
+            ranked_answers[answer] = rank_key
             if best_key is None or rank_key > best_key:
                 best_key = rank_key
                 best_answer = answer
+
+        if self.config.strict_zero_one_policy and best_answer in {0, 1}:
+            row = stats.get(best_answer, {})
+            weak_small = (
+                row.get("independent", 0.0) <= 0
+                and row.get("verified", 0.0) <= 0
+                and row.get("verifier_votes", 0.0) <= 0
+                and row.get("audit_votes", 0.0) <= 0
+                and row.get("probe_votes", 0.0) <= 0
+                and row.get("geometry_votes", 0.0) <= 0
+                and row.get("selector_votes", 0.0) <= 0
+            )
+            if weak_small:
+                alternatives = [
+                    (ans, key) for ans, key in ranked_answers.items() if ans not in {0, 1}
+                ]
+                if alternatives:
+                    alternatives.sort(key=lambda item: item[1], reverse=True)
+                    best_answer = alternatives[0][0]
 
         if modulus:
             return best_answer % modulus

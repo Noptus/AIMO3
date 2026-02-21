@@ -19,6 +19,15 @@ class SandboxTests(unittest.TestCase):
         result = execute_python("while True:\n    pass", policy=policy)
         self.assertFalse(result.success)
 
+    def test_allows_whitelisted_import(self) -> None:
+        result = execute_python("import math\nprint(math.isqrt(81))")
+        self.assertTrue(result.success)
+        self.assertIn("9", result.stdout)
+
+    def test_blocks_non_whitelisted_import(self) -> None:
+        result = execute_python("import pathlib\nprint('x')")
+        self.assertFalse(result.success)
+
 
 if __name__ == "__main__":
     unittest.main()

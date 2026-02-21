@@ -1,0 +1,22 @@
+{
+  "id": "raphaelcaillon/aimo3-progress-prize-3-working",
+  "title": "AIMO3 Progress Prize 3 Working",
+  "code_file": "aimo3_submission.ipynb",
+  "language": "python",
+  "kernel_type": "notebook",
+  "is_private": "true",
+  "enable_gpu": "true",
+  "enable_internet": "false",
+  "competition_sources": [
+    "ai-mathematical-olympiad-progress-prize-3"
+  ],
+  "dataset_sources": [],
+  "kernel_sources": [
+    "andreasbis/aimo-3-utils"
+  ],
+  "model_sources": [
+    "danielhanchen/gpt-oss-120b/transformers/default/1",
+    "danielhanchen/gpt-oss-20b/transformers/default/1",
+    "deepseek-ai/deepseek-math/pytorch/deepseek-math-7b-instruct/1"
+  ]
+}

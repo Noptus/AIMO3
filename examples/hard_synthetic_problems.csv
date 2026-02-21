@@ -1,0 +1,81 @@
+id,problem,answer,category
+hard_001,Let S = 82^43486 + 96^148182 - 33^29248 + 34^66931. Compute S modulo 100000. Return the least nonnegative residue.,76383,number_theory_power_mix
+hard_002,"Define A = sum_{k=0}^{46} (-1)^k * C(46, k) * (64+k)^48. Find A modulo 65521.",35683,combinatorics_finite_difference
+hard_003,"Sequence (u_n) satisfies u_(n+2) = 14*u_(n+1) + 70*u_n with u_0=80416, u_1=52231. Compute u_1292195 modulo 99991.",29777,recurrence_linear
+hard_004,"Let F_0=0, F_1=1, and F_(t+2)=F_(t+1)+F_t. Compute B = F_227219606460*F_227219606461 + F_227219877238 modulo 99991.",13032,number_theory_fibonacci
+hard_005,"Count integer tuples (x_1,...,x_9) with x_1+...+x_9=102 and 0 <= x_i <= 18 for all i. Give the count modulo 100000.",98614,combinatorics_bounded_compositions
+hard_006,How many surjective functions exist from a set of size 29 to a set of size 12? Return the answer modulo 99991.,73990,combinatorics_surjection
+hard_007,"Let P(x)=(1+x)^93(1+x^2)^61(1+x^3)^49. Find the coefficient of x^93 in P(x), modulo 99989.",25791,algebra_polynomial_coefficient
+hard_008,"Let M=[[10,22,26],[17,45,41],[14,47,6]]. Compute trace(M^612449) modulo 99991.",39095,linear_algebra_matrix_power
+hard_009,"Let x be the smallest nonnegative integer such that x ≡ 18 (mod 107), x ≡ 65 (mod 103), and x ≡ 31 (mod 101). Compute x^2 + 23x + 55 modulo 50021.",5558,number_theory_crt
+hard_010,"In the coordinate plane, triangle vertices are A=(15,37), B=(146,14), C=(69,99). Let T = 2*Area(ABC) and Q = AB^2 + BC^2 + CA^2. Compute T^11 + Q^8 + TQ modulo 99991.",40988,geometry_coordinate
+hard_011,Let S = 31^231176 + 61^244673 - 71^89346 + 19^26175. Compute S modulo 50021. Return the least nonnegative residue.,10964,number_theory_power_mix
+hard_012,"Define A = sum_{k=0}^{72} (-1)^k * C(72, k) * (240+k)^79. Find A modulo 99989.",74451,combinatorics_finite_difference
+hard_013,"Sequence (u_n) satisfies u_(n+2) = 45*u_(n+1) + 53*u_n with u_0=5290, u_1=10022. Compute u_1367729 modulo 50021.",36527,recurrence_linear
+hard_014,"Let F_0=0, F_1=1, and F_(t+2)=F_(t+1)+F_t. Compute B = F_663532804523*F_663532804524 + F_663533044426 modulo 65521.",6881,number_theory_fibonacci
+hard_015,"Count integer tuples (x_1,...,x_11) with x_1+...+x_11=154 and 0 <= x_i <= 25 for all i. Give the count modulo 65521.",29833,combinatorics_bounded_compositions
+hard_016,How many surjective functions exist from a set of size 34 to a set of size 8? Return the answer modulo 50021.,4593,combinatorics_surjection
+hard_017,"Let P(x)=(1+x)^85(1+x^2)^39(1+x^3)^21. Find the coefficient of x^103 in P(x), modulo 50021.",36676,algebra_polynomial_coefficient
+hard_018,"Let M=[[30,27,42],[30,18,6],[49,11,11]]. Compute trace(M^257844) modulo 99991.",20527,linear_algebra_matrix_power
+hard_019,"Let x be the smallest nonnegative integer such that x ≡ 36 (mod 109), x ≡ 83 (mod 107), and x ≡ 73 (mod 101). Compute x^2 + 30x + 67 modulo 65521.",35664,number_theory_crt
+hard_020,"In the coordinate plane, triangle vertices are A=(43,51), B=(129,57), C=(107,161). Let T = 2*Area(ABC) and Q = AB^2 + BC^2 + CA^2. Compute T^6 + Q^5 + TQ modulo 60013.",45903,geometry_coordinate
+hard_021,Let S = 156^125588 + 42^67895 - 81^101222 + 80^55590. Compute S modulo 99991. Return the least nonnegative residue.,74961,number_theory_power_mix
+hard_022,"Define A = sum_{k=0}^{53} (-1)^k * C(53, k) * (63+k)^61. Find A modulo 50021.",8256,combinatorics_finite_difference
+hard_023,"Sequence (u_n) satisfies u_(n+2) = 86*u_(n+1) + 85*u_n with u_0=54426, u_1=39750. Compute u_978594 modulo 60013.",16048,recurrence_linear
+hard_024,"Let F_0=0, F_1=1, and F_(t+2)=F_(t+1)+F_t. Compute B = F_229111089194*F_229111089195 + F_229112610583 modulo 99991.",83970,number_theory_fibonacci
+hard_025,"Count integer tuples (x_1,...,x_10) with x_1+...+x_10=131 and 0 <= x_i <= 27 for all i. Give the count modulo 60013.",55432,combinatorics_bounded_compositions
+hard_026,How many surjective functions exist from a set of size 32 to a set of size 9? Return the answer modulo 100000.,32000,combinatorics_surjection
+hard_027,"Let P(x)=(1+x)^41(1+x^2)^45(1+x^3)^50. Find the coefficient of x^110 in P(x), modulo 99989.",56076,algebra_polynomial_coefficient
+hard_028,"Let M=[[29,7,27],[34,31,41],[24,30,45]]. Compute trace(M^483223) modulo 50021.",7951,linear_algebra_matrix_power
+hard_029,"Let x be the smallest nonnegative integer such that x ≡ 86 (mod 103), x ≡ 65 (mod 107), and x ≡ 74 (mod 109). Compute x^2 + 60x + 155 modulo 99991.",62201,number_theory_crt
+hard_030,"In the coordinate plane, triangle vertices are A=(2,72), B=(124,27), C=(79,120). Let T = 2*Area(ABC) and Q = AB^2 + BC^2 + CA^2. Compute T^7 + Q^3 + TQ modulo 50021.",10119,geometry_coordinate
+hard_031,Let S = 187^155142 + 53^73064 - 16^92323 + 84^43319. Compute S modulo 60013. Return the least nonnegative residue.,55426,number_theory_power_mix
+hard_032,"Define A = sum_{k=0}^{38} (-1)^k * C(38, k) * (197+k)^40. Find A modulo 99989.",56294,combinatorics_finite_difference
+hard_033,"Sequence (u_n) satisfies u_(n+2) = 47*u_(n+1) + 21*u_n with u_0=78266, u_1=51189. Compute u_1562877 modulo 99991.",6208,recurrence_linear
+hard_034,"Let F_0=0, F_1=1, and F_(t+2)=F_(t+1)+F_t. Compute B = F_162680981795*F_162680981796 + F_162681696207 modulo 99989.",84189,number_theory_fibonacci
+hard_035,"Count integer tuples (x_1,...,x_10) with x_1+...+x_10=158 and 0 <= x_i <= 20 for all i. Give the count modulo 99991.",1850,combinatorics_bounded_compositions
+hard_036,How many surjective functions exist from a set of size 24 to a set of size 14? Return the answer modulo 100000.,0,combinatorics_surjection
+hard_037,"Let P(x)=(1+x)^95(1+x^2)^88(1+x^3)^51. Find the coefficient of x^125 in P(x), modulo 60013.",55068,algebra_polynomial_coefficient
+hard_038,"Let M=[[39,35,11],[49,36,9],[18,28,30]]. Compute trace(M^612706) modulo 99989.",68968,linear_algebra_matrix_power
+hard_039,"Let x be the smallest nonnegative integer such that x ≡ 19 (mod 109), x ≡ 77 (mod 107), and x ≡ 62 (mod 101). Compute x^2 + 38x + 79 modulo 60013.",49976,number_theory_crt
+hard_040,"In the coordinate plane, triangle vertices are A=(14,77), B=(158,69), C=(16,103). Let T = 2*Area(ABC) and Q = AB^2 + BC^2 + CA^2. Compute T^6 + Q^4 + TQ modulo 100000.",28000,geometry_coordinate
+hard_041,Let S = 35^186767 + 13^157722 - 98^90000 + 15^26303. Compute S modulo 99991. Return the least nonnegative residue.,94913,number_theory_power_mix
+hard_042,"Define A = sum_{k=0}^{67} (-1)^k * C(67, k) * (203+k)^71. Find A modulo 50021.",10971,combinatorics_finite_difference
+hard_043,"Sequence (u_n) satisfies u_(n+2) = 33*u_(n+1) + 127*u_n with u_0=21740, u_1=13612. Compute u_333384 modulo 65521.",4134,recurrence_linear
+hard_044,"Let F_0=0, F_1=1, and F_(t+2)=F_(t+1)+F_t. Compute B = F_317078686195*F_317078686196 + F_317078926524 modulo 65521.",13035,number_theory_fibonacci
+hard_045,"Count integer tuples (x_1,...,x_10) with x_1+...+x_10=126 and 0 <= x_i <= 18 for all i. Give the count modulo 99991.",19072,combinatorics_bounded_compositions
+hard_046,How many surjective functions exist from a set of size 20 to a set of size 14? Return the answer modulo 99989.,39136,combinatorics_surjection
+hard_047,"Let P(x)=(1+x)^40(1+x^2)^80(1+x^3)^51. Find the coefficient of x^71 in P(x), modulo 50021.",13526,algebra_polynomial_coefficient
+hard_048,"Let M=[[35,2,49],[34,33,21],[20,10,4]]. Compute trace(M^1400709) modulo 100000.",25042,linear_algebra_matrix_power
+hard_049,"Let x be the smallest nonnegative integer such that x ≡ 51 (mod 109), x ≡ 66 (mod 107), and x ≡ 92 (mod 101). Compute x^2 + 18x + 72 modulo 60013.",38808,number_theory_crt
+hard_050,"In the coordinate plane, triangle vertices are A=(4,72), B=(109,71), C=(117,198). Let T = 2*Area(ABC) and Q = AB^2 + BC^2 + CA^2. Compute T^4 + Q^6 + TQ modulo 100000.",96489,geometry_coordinate
+hard_051,Let S = 145^340760 + 127^127857 - 82^34055 + 62^26985. Compute S modulo 99989. Return the least nonnegative residue.,3925,number_theory_power_mix
+hard_052,"Define A = sum_{k=0}^{73} (-1)^k * C(73, k) * (196+k)^76. Find A modulo 99989.",54827,combinatorics_finite_difference
+hard_053,"Sequence (u_n) satisfies u_(n+2) = 46*u_(n+1) + 25*u_n with u_0=26634, u_1=52331. Compute u_1786222 modulo 100000.",21976,recurrence_linear
+hard_054,"Let F_0=0, F_1=1, and F_(t+2)=F_(t+1)+F_t. Compute B = F_436037449796*F_436037449797 + F_436038110324 modulo 99989.",99323,number_theory_fibonacci
+hard_055,"Count integer tuples (x_1,...,x_8) with x_1+...+x_8=117 and 0 <= x_i <= 25 for all i. Give the count modulo 100000.",68840,combinatorics_bounded_compositions
+hard_056,How many surjective functions exist from a set of size 31 to a set of size 12? Return the answer modulo 100000.,60000,combinatorics_surjection
+hard_057,"Let P(x)=(1+x)^46(1+x^2)^29(1+x^3)^37. Find the coefficient of x^61 in P(x), modulo 99989.",97973,algebra_polynomial_coefficient
+hard_058,"Let M=[[36,47,15],[17,46,8],[3,27,37]]. Compute trace(M^800788) modulo 50021.",7202,linear_algebra_matrix_power
+hard_059,"Let x be the smallest nonnegative integer such that x ≡ 78 (mod 103), x ≡ 65 (mod 101), and x ≡ 52 (mod 109). Compute x^2 + 73x + 163 modulo 60013.",13193,number_theory_crt
+hard_060,"In the coordinate plane, triangle vertices are A=(28,8), B=(115,82), C=(110,102). Let T = 2*Area(ABC) and Q = AB^2 + BC^2 + CA^2. Compute T^9 + Q^8 + TQ modulo 99989.",80922,geometry_coordinate
+hard_061,Let S = 166^182470 + 125^235691 - 96^146592 + 48^32673. Compute S modulo 50021. Return the least nonnegative residue.,21581,number_theory_power_mix
+hard_062,"Define A = sum_{k=0}^{71} (-1)^k * C(71, k) * (75+k)^75. Find A modulo 65521.",47875,combinatorics_finite_difference
+hard_063,"Sequence (u_n) satisfies u_(n+2) = 92*u_(n+1) + 23*u_n with u_0=9628, u_1=54167. Compute u_870579 modulo 65521.",16121,recurrence_linear
+hard_064,"Let F_0=0, F_1=1, and F_(t+2)=F_(t+1)+F_t. Compute B = F_586457878092*F_586457878093 + F_586458790617 modulo 65521.",19284,number_theory_fibonacci
+hard_065,"Count integer tuples (x_1,...,x_9) with x_1+...+x_9=129 and 0 <= x_i <= 30 for all i. Give the count modulo 99989.",48234,combinatorics_bounded_compositions
+hard_066,How many surjective functions exist from a set of size 34 to a set of size 11? Return the answer modulo 60013.,10417,combinatorics_surjection
+hard_067,"Let P(x)=(1+x)^89(1+x^2)^55(1+x^3)^30. Find the coefficient of x^45 in P(x), modulo 65521.",53849,algebra_polynomial_coefficient
+hard_068,"Let M=[[45,42,10],[31,40,34],[7,9,9]]. Compute trace(M^972544) modulo 99989.",55070,linear_algebra_matrix_power
+hard_069,"Let x be the smallest nonnegative integer such that x ≡ 91 (mod 107), x ≡ 3 (mod 101), and x ≡ 56 (mod 109). Compute x^2 + 60x + 156 modulo 50021.",14750,number_theory_crt
+hard_070,"In the coordinate plane, triangle vertices are A=(29,38), B=(107,34), C=(116,181). Let T = 2*Area(ABC) and Q = AB^2 + BC^2 + CA^2. Compute T^9 + Q^6 + TQ modulo 100000.",88672,geometry_coordinate
+hard_071,Let S = 152^100221 + 17^72930 - 78^28882 + 92^59356. Compute S modulo 65521. Return the least nonnegative residue.,64610,number_theory_power_mix
+hard_072,"Define A = sum_{k=0}^{63} (-1)^k * C(63, k) * (218+k)^70. Find A modulo 65521.",55966,combinatorics_finite_difference
+hard_073,"Sequence (u_n) satisfies u_(n+2) = 28*u_(n+1) + 115*u_n with u_0=60043, u_1=78454. Compute u_1051806 modulo 99991.",68718,recurrence_linear
+hard_074,"Let F_0=0, F_1=1, and F_(t+2)=F_(t+1)+F_t. Compute B = F_324495899948*F_324495899949 + F_324497243670 modulo 100000.",23234,number_theory_fibonacci
+hard_075,"Count integer tuples (x_1,...,x_12) with x_1+...+x_12=163 and 0 <= x_i <= 20 for all i. Give the count modulo 60013.",51161,combinatorics_bounded_compositions
+hard_076,How many surjective functions exist from a set of size 27 to a set of size 11? Return the answer modulo 60013.,41559,combinatorics_surjection
+hard_077,"Let P(x)=(1+x)^40(1+x^2)^63(1+x^3)^61. Find the coefficient of x^151 in P(x), modulo 60013.",19634,algebra_polynomial_coefficient
+hard_078,"Let M=[[3,31,44],[47,9,42],[24,31,43]]. Compute trace(M^330249) modulo 99991.",35310,linear_algebra_matrix_power
+hard_079,"Let x be the smallest nonnegative integer such that x ≡ 28 (mod 109), x ≡ 15 (mod 103), and x ≡ 46 (mod 107). Compute x^2 + 22x + 36 modulo 50021.",24498,number_theory_crt
+hard_080,"In the coordinate plane, triangle vertices are A=(35,6), B=(167,54), C=(95,110). Let T = 2*Area(ABC) and Q = AB^2 + BC^2 + CA^2. Compute T^11 + Q^6 + TQ modulo 99989.",34328,geometry_coordinate

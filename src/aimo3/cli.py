@@ -6,6 +6,7 @@ import argparse
 import datetime as dt
 import json
 import os
+import subprocess
 import time
 from pathlib import Path
 
@@ -13,8 +14,17 @@ import pandas as pd
 
 from .client import OpenAICompatChatClient
 from .kaggle_api import KaggleAutomation
-from .pipeline import run_inference, save_debug, save_submission
+from .langgraph_solver import LangGraphAIMO3Solver, LangGraphUnavailableError
+from .pipeline import (
+    run_inference,
+    sanitize_submission,
+    save_debug,
+    save_submission,
+    validate_submission_file,
+)
 from .solver import AIMO3Solver, SolverConfig
+
+FORCED_MODEL = "openai/gpt-oss-120b"
 
 
 def _load_dotenv_if_present() -> None:
@@ -27,9 +37,19 @@ def _load_dotenv_if_present() -> None:
 
 
 def _add_solver_args(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--model", default=None)
+    parser.add_argument(
+        "--model",
+        default=None,
+        help=(f"Requested model identifier. Runtime policy currently enforces {FORCED_MODEL}."),
+    )
     parser.add_argument("--base-url", default=None)
     parser.add_argument("--api-key", default=None)
+    parser.add_argument(
+        "--orchestrator",
+        choices=["classic", "langgraph"],
+        default=os.getenv("AIMO_ORCHESTRATOR", "classic"),
+        help="Solver runtime: classic handcrafted pipeline or LangGraph state machine.",
+    )
 
     parser.add_argument(
         "--profile",
@@ -46,10 +66,13 @@ def _add_solver_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--early-stop-ratio", type=float, default=0.8)
     parser.add_argument("--early-stop-attempt", type=int, default=4)
     parser.add_argument("--max-code-blocks-per-attempt", type=int, default=2)
+    parser.add_argument("--mandatory-code-attempts", type=int, default=0)
     parser.add_argument("--agentic-tool-rounds", type=int, default=1)
     parser.add_argument("--agentic-observation-chars", type=int, default=1200)
     parser.add_argument("--agentic-stateful-python", action="store_true", default=True)
-    parser.add_argument("--no-agentic-stateful-python", action="store_false", dest="agentic_stateful_python")
+    parser.add_argument(
+        "--no-agentic-stateful-python", action="store_false", dest="agentic_stateful_python"
+    )
     parser.add_argument("--agentic-state-chars", type=int, default=20000)
     parser.add_argument(
         "--stage-time-reserve-sec",
@@ -114,9 +137,20 @@ def _add_solver_args(parser: argparse.ArgumentParser) -> None:
         help="Allow confidence-based early stop even when per-problem time is set.",
     )
     parser.add_argument("--default-answer", type=int, default=0)
+    parser.add_argument("--mini-solver-enabled", action="store_true", default=True)
+    parser.add_argument(
+        "--no-mini-solver-enabled", action="store_false", dest="mini_solver_enabled"
+    )
+    parser.add_argument("--mini-solver-min-confidence", type=float, default=0.95)
+    parser.add_argument("--strict-zero-one-policy", action="store_true", default=True)
+    parser.add_argument(
+        "--no-strict-zero-one-policy", action="store_false", dest="strict_zero_one_policy"
+    )
 
     parser.add_argument("--adaptive-complexity", action="store_true", default=True)
-    parser.add_argument("--no-adaptive-complexity", action="store_false", dest="adaptive_complexity")
+    parser.add_argument(
+        "--no-adaptive-complexity", action="store_false", dest="adaptive_complexity"
+    )
     parser.add_argument("--hard-mode", action="store_true")
     parser.add_argument("--hard-attempts", type=int, default=12)
     parser.add_argument("--hard-max-tokens", type=int, default=4096)
@@ -171,6 +205,7 @@ def _profile_overrides(args: argparse.Namespace) -> dict[str, int | bool | float
         return {
             "attempts": min(args.attempts, 2),
             "max_tokens": min(args.max_tokens, 384),
+            "mandatory_code_attempts": min(max(args.mandatory_code_attempts, 0), 1),
             "hard_mode": False,
             "agentic_tool_rounds": min(args.agentic_tool_rounds, 1),
             "agentic_observation_chars": min(args.agentic_observation_chars, 800),
@@ -196,6 +231,9 @@ def _profile_overrides(args: argparse.Namespace) -> dict[str, int | bool | float
             "sparse_recovery_temperature": min(args.sparse_recovery_temperature, 0.1),
             "early_stop_ratio": min(max(args.early_stop_ratio, 0.6), 0.75),
             "adaptive_complexity": False,
+            "mini_solver_enabled": True,
+            "mini_solver_min_confidence": max(args.mini_solver_min_confidence, 0.95),
+            "strict_zero_one_policy": True,
         }
 
     if args.profile == "hard":
@@ -203,6 +241,7 @@ def _profile_overrides(args: argparse.Namespace) -> dict[str, int | bool | float
             "attempts": max(args.attempts, 12),
             "max_tokens": max(args.max_tokens, 4096),
             "max_code_blocks_per_attempt": max(args.max_code_blocks_per_attempt, 4),
+            "mandatory_code_attempts": max(args.mandatory_code_attempts, 2),
             "agentic_tool_rounds": max(args.agentic_tool_rounds, 2),
             "agentic_observation_chars": max(args.agentic_observation_chars, 1200),
             "agentic_stateful_python": True,
@@ -248,6 +287,9 @@ def _profile_overrides(args: argparse.Namespace) -> dict[str, int | bool | float
             "sparse_recovery_temperature": min(args.sparse_recovery_temperature, 0.12),
             "early_stop_ratio": max(args.early_stop_ratio, 0.85),
             "adaptive_complexity": True,
+            "mini_solver_enabled": True,
+            "mini_solver_min_confidence": min(max(args.mini_solver_min_confidence, 0.93), 0.99),
+            "strict_zero_one_policy": True,
         }
 
     if args.profile == "aimo120b":
@@ -255,6 +297,7 @@ def _profile_overrides(args: argparse.Namespace) -> dict[str, int | bool | float
             "attempts": max(args.attempts, 8),
             "max_tokens": max(args.max_tokens, 4096),
             "max_code_blocks_per_attempt": max(args.max_code_blocks_per_attempt, 4),
+            "mandatory_code_attempts": max(args.mandatory_code_attempts, 2),
             "agentic_tool_rounds": max(args.agentic_tool_rounds, 2),
             "agentic_observation_chars": max(args.agentic_observation_chars, 1400),
             "agentic_stateful_python": True,
@@ -300,15 +343,21 @@ def _profile_overrides(args: argparse.Namespace) -> dict[str, int | bool | float
             "sparse_recovery_temperature": min(args.sparse_recovery_temperature, 0.12),
             "early_stop_ratio": max(args.early_stop_ratio, 0.85),
             "adaptive_complexity": True,
+            "mini_solver_enabled": True,
+            "mini_solver_min_confidence": min(max(args.mini_solver_min_confidence, 0.92), 0.99),
+            "strict_zero_one_policy": True,
         }
 
     if args.profile == "autonomous120b":
-        force_full = args.force_full_problem_time if args.force_full_problem_time is not None else True
+        force_full = (
+            args.force_full_problem_time if args.force_full_problem_time is not None else True
+        )
         per_problem_time = args.per_problem_time_sec if args.per_problem_time_sec > 0 else 600
         return {
             "attempts": max(args.attempts, 16),
             "max_tokens": max(args.max_tokens, 6144),
             "max_code_blocks_per_attempt": max(args.max_code_blocks_per_attempt, 6),
+            "mandatory_code_attempts": max(args.mandatory_code_attempts, 3),
             "agentic_tool_rounds": max(args.agentic_tool_rounds, 4),
             "agentic_observation_chars": max(args.agentic_observation_chars, 2200),
             "agentic_stateful_python": True,
@@ -358,6 +407,9 @@ def _profile_overrides(args: argparse.Namespace) -> dict[str, int | bool | float
             "min_time_for_attempt_sec": max(args.min_time_for_attempt_sec, 25),
             "min_time_for_stage_sec": max(args.min_time_for_stage_sec, 10),
             "force_full_problem_time": bool(force_full),
+            "mini_solver_enabled": True,
+            "mini_solver_min_confidence": min(max(args.mini_solver_min_confidence, 0.9), 0.99),
+            "strict_zero_one_policy": True,
         }
 
     return {}
@@ -366,7 +418,13 @@ def _profile_overrides(args: argparse.Namespace) -> dict[str, int | bool | float
 def _build_solver_from_args(args: argparse.Namespace) -> AIMO3Solver:
     groq_key = os.getenv("GROQ_API_KEY")
 
-    model = args.model or os.getenv("AIMO_MODEL") or "openai/gpt-oss-120b"
+    requested_model = args.model or os.getenv("AIMO_MODEL") or FORCED_MODEL
+    model = FORCED_MODEL
+    if requested_model != FORCED_MODEL:
+        print(
+            f"[model-policy] Overriding requested model '{requested_model}' to '{FORCED_MODEL}'.",
+            flush=True,
+        )
 
     if args.base_url:
         base_url = args.base_url
@@ -423,6 +481,7 @@ def _build_solver_from_args(args: argparse.Namespace) -> AIMO3Solver:
         early_stop_ratio=float(value("early_stop_ratio")),
         early_stop_attempt=args.early_stop_attempt,
         max_code_blocks_per_attempt=int(value("max_code_blocks_per_attempt")),
+        mandatory_code_attempts=max(0, int(value("mandatory_code_attempts"))),
         agentic_tool_rounds=int(value("agentic_tool_rounds")),
         agentic_observation_chars=int(value("agentic_observation_chars")),
         agentic_stateful_python=bool(value("agentic_stateful_python")),
@@ -436,6 +495,9 @@ def _build_solver_from_args(args: argparse.Namespace) -> AIMO3Solver:
         min_time_for_stage_sec=int(value("min_time_for_stage_sec")),
         force_full_problem_time=bool(value("force_full_problem_time")),
         default_answer=args.default_answer,
+        mini_solver_enabled=bool(value("mini_solver_enabled")),
+        mini_solver_min_confidence=float(value("mini_solver_min_confidence")),
+        strict_zero_one_policy=bool(value("strict_zero_one_policy")),
         adaptive_complexity=bool(value("adaptive_complexity")),
         hard_mode=bool(value("hard_mode")),
         hard_attempts=int(value("hard_attempts")),
@@ -470,6 +532,16 @@ def _build_solver_from_args(args: argparse.Namespace) -> AIMO3Solver:
         sparse_recovery_temperature=float(value("sparse_recovery_temperature")),
     )
 
+    orchestrator = str(getattr(args, "orchestrator", "classic") or "classic").strip().lower()
+    if orchestrator == "langgraph":
+        try:
+            return LangGraphAIMO3Solver(client=client, config=config)
+        except LangGraphUnavailableError as exc:
+            raise RuntimeError(
+                "LangGraph orchestrator requested but dependency is missing. "
+                "Install with `pip install -e '.[agentic]'` and retry."
+            ) from exc
+
     return AIMO3Solver(client=client, config=config)
 
 
@@ -485,10 +557,458 @@ def _validate_input_path(input_csv: str) -> Path:
         local_csvs = sorted(Path.cwd().glob("**/*.csv"))
         preview = ", ".join(str(p) for p in local_csvs[:5]) if local_csvs else "none found"
         raise FileNotFoundError(
-            f"Input CSV not found: {input_path}. "
-            f"Examples in this repo: {preview}"
+            f"Input CSV not found: {input_path}. Examples in this repo: {preview}"
         )
     return input_path
+
+
+def _read_kernel_metadata(kernel_dir: str | Path) -> tuple[Path, dict[str, object]]:
+    root = Path(kernel_dir).expanduser()
+    metadata_path = root / "kernel-metadata.json"
+    if not metadata_path.exists():
+        raise FileNotFoundError(f"Kernel metadata not found: {metadata_path}")
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    return root, metadata
+
+
+def _resolve_kernel_ref(kernel: str | None, kernel_dir: str | Path) -> str:
+    if kernel and kernel.strip():
+        return kernel.strip()
+    _, metadata = _read_kernel_metadata(kernel_dir)
+    kernel_ref = str(metadata.get("id", "")).strip()
+    if not kernel_ref:
+        raise ValueError("Kernel id is missing. Set --kernel or kernel-metadata.json id.")
+    return kernel_ref
+
+
+def _kernel_default_username(kernel_ref: str) -> str | None:
+    if "/" not in kernel_ref:
+        return None
+    owner, _ = kernel_ref.split("/", 1)
+    owner = owner.strip()
+    return owner if owner else None
+
+
+def _build_submission_message(message: str, *, prefix: str) -> str:
+    if message:
+        return message
+    timestamp = dt.datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
+    return f"{prefix} ({timestamp})"
+
+
+def _assert_kernel_metadata_safe(
+    *,
+    metadata: dict[str, object],
+    kernel_root: Path,
+    competition: str,
+) -> None:
+    kernel_ref = str(metadata.get("id", "")).strip()
+    if not kernel_ref:
+        raise ValueError("kernel-metadata.json must define `id`.")
+    if "/" not in kernel_ref:
+        raise ValueError("kernel-metadata.json `id` must be <owner>/<slug>.")
+
+    code_file = str(metadata.get("code_file", "")).strip()
+    if not code_file:
+        raise ValueError("kernel-metadata.json must define `code_file`.")
+    code_path = kernel_root / code_file
+    if not code_path.exists():
+        raise FileNotFoundError(f"Kernel code file not found: {code_path}")
+
+    code_text = code_path.read_text(encoding="utf-8")
+    required_markers = [
+        "AIMO3InferenceServer",
+        "run_local_gateway",
+        "KAGGLE_IS_COMPETITION_RERUN",
+    ]
+    missing_markers = [m for m in required_markers if m not in code_text]
+    if missing_markers:
+        raise ValueError(
+            "Kernel code appears not wired for Kaggle inference-server submission. "
+            f"Missing markers in {code_path}: {missing_markers}"
+        )
+
+    sources = metadata.get("competition_sources", [])
+    if not isinstance(sources, list) or competition not in [str(x) for x in sources]:
+        raise ValueError(
+            f"kernel-metadata.json `competition_sources` must include `{competition}`."
+        )
+
+    enable_internet = metadata.get("enable_internet", False)
+    if str(enable_internet).strip().lower() == "true":
+        raise ValueError(
+            "kernel-metadata.json has `enable_internet=true`. "
+            "This competition requires internet disabled."
+        )
+
+    model_sources_raw = metadata.get("model_sources", [])
+    if not isinstance(model_sources_raw, list):
+        raise ValueError("kernel-metadata.json `model_sources` must be a list.")
+    model_sources = [str(x).strip() for x in model_sources_raw if str(x).strip()]
+    if not model_sources:
+        raise ValueError(
+            "kernel-metadata.json `model_sources` is empty. "
+            "Attach a strong offline model for no-internet competition inference."
+        )
+
+    model_blob = " ".join(model_sources).lower()
+    required_hints = [
+        token.strip().lower()
+        for token in os.getenv(
+            "AIMO_REQUIRED_MODEL_HINTS",
+            "gpt-oss-120b,gpt-oss-20b,qwen3-32b,qwen3-30b-a3b",
+        ).split(",")
+        if token.strip()
+    ]
+    weak_hints = [
+        token.strip().lower()
+        for token in os.getenv(
+            "AIMO_WEAK_MODEL_HINTS",
+            "deepseek-math-7b,7b-instruct",
+        ).split(",")
+        if token.strip()
+    ]
+
+    has_required = any(hint in model_blob for hint in required_hints)
+    has_weak = any(hint in model_blob for hint in weak_hints)
+    if not has_required:
+        raise ValueError(
+            "kernel-metadata.json `model_sources` does not include a required strong model hint. "
+            f"Configured={model_sources} required_hints={required_hints}"
+        )
+    if has_weak and not has_required:
+        raise ValueError(
+            "kernel-metadata.json appears to use a weak model source "
+            f"({model_sources}). This commonly leads to zero-score submissions."
+        )
+
+
+def _check_daily_submission_quota(
+    api: KaggleAutomation,
+    *,
+    max_submissions_per_day: int,
+    scan_limit: int,
+    skip_if_daily_limit_reached: bool,
+) -> bool:
+    if max_submissions_per_day <= 0:
+        return True
+
+    today_utc = dt.datetime.utcnow().date()
+    used_today = api.count_submissions_on_utc_date(today_utc, limit=scan_limit)
+    remaining = max_submissions_per_day - used_today
+    print(
+        f"Submission quota check (UTC {today_utc}): "
+        f"used={used_today} max={max_submissions_per_day} remaining={max(0, remaining)}"
+    )
+    if used_today < max_submissions_per_day:
+        return True
+
+    message = (
+        "Daily submission allowance already reached. "
+        "Skipping submission to avoid a guaranteed Kaggle API error."
+    )
+    if skip_if_daily_limit_reached:
+        print(message)
+        return False
+    raise RuntimeError(message)
+
+
+def _validate_kernel_runtime_health(
+    *,
+    output_dir: str | Path,
+    strict: bool,
+) -> None:
+    out = Path(output_dir).expanduser()
+    debug_path = out / "submission_debug_sources.csv"
+    runtime_health_path = out / "runtime_health.json"
+
+    if not debug_path.exists():
+        message = (
+            "Kernel output is missing submission_debug_sources.csv; "
+            "cannot verify runtime model health."
+        )
+        if strict:
+            raise FileNotFoundError(message)
+        print(f"Warning: {message}")
+        return
+
+    debug_df = pd.read_csv(debug_path)
+    if debug_df.empty:
+        message = "submission_debug_sources.csv is empty; runtime health cannot be verified."
+        if strict:
+            raise ValueError(message)
+        print(f"Warning: {message}")
+        return
+
+    required_columns = [
+        "id",
+        "answer",
+        "source",
+        "model_status",
+        "time_left_s",
+        "tool_calls",
+        "tool_errors",
+        "candidate_count",
+        "vote_margin",
+    ]
+    missing_columns = [col for col in required_columns if col not in debug_df.columns]
+    if missing_columns:
+        message = (
+            "submission_debug_sources.csv is missing required columns: "
+            f"{missing_columns}"
+        )
+        if strict:
+            raise ValueError(message)
+        print(f"Warning: {message}")
+        return
+
+    # Enforce numeric and range integrity for strict runtime diagnostics.
+    answer_values = pd.to_numeric(debug_df["answer"], errors="coerce")
+    if bool(answer_values.isna().any()):
+        raise RuntimeError("Kernel runtime health check failed: non-numeric debug answers")
+    if bool(((answer_values < 0) | (answer_values > 99_999)).any()):
+        raise RuntimeError("Kernel runtime health check failed: debug answers out of range [0,99999]")
+
+    for numeric_column in ["time_left_s", "tool_calls", "tool_errors", "candidate_count", "vote_margin"]:
+        parsed = pd.to_numeric(debug_df[numeric_column], errors="coerce")
+        if bool(parsed.isna().any()):
+            raise RuntimeError(
+                "Kernel runtime health check failed: "
+                f"non-numeric debug field `{numeric_column}`"
+            )
+
+    if "source" in debug_df.columns:
+        source_counts = debug_df["source"].astype(str).value_counts().to_dict()
+    else:
+        source_counts = {}
+
+    runtime_health: dict[str, object] = {}
+    if runtime_health_path.exists():
+        try:
+            loaded = json.loads(runtime_health_path.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                runtime_health = loaded
+        except Exception:
+            runtime_health = {}
+
+    if source_counts and set(source_counts.keys()) == {"sample_validation_passthrough"}:
+        if strict:
+            if not runtime_health:
+                raise RuntimeError(
+                    "Runtime health validation failed: sample-only output requires runtime_health.json "
+                    "with solver warmup diagnostics."
+                )
+            if not bool(runtime_health.get("solver_warmup_ok", False)):
+                raise RuntimeError(
+                    "Runtime health validation failed: solver warmup was not healthy "
+                    f"(runtime_health={runtime_health})"
+                )
+        print(
+            "Runtime health validation: sample validation passthrough detected; "
+            "skipping offline-model health checks."
+        )
+        return
+
+    issues: list[str] = []
+
+    if strict and not runtime_health:
+        issues.append("missing_runtime_health_json")
+
+    if runtime_health:
+        if not bool(runtime_health.get("solver_warmup_ok", False)):
+            issues.append(f"runtime_health_solver_warmup_failed={runtime_health}")
+
+        selected_family = str(runtime_health.get("selected_model_family", "")).strip().lower()
+        if strict and selected_family and selected_family not in {"gpt_oss", "deepseek"}:
+            issues.append(f"invalid_selected_model_family={selected_family}")
+
+        backend = str(runtime_health.get("backend", "")).strip().lower()
+        if strict and backend in {"", "none", "disabled", "safe_mode"}:
+            issues.append(f"runtime_health_backend_inactive={backend or 'empty'}")
+
+        try:
+            gpu_sm = int(runtime_health.get("gpu_sm", 0) or 0)
+        except Exception:
+            gpu_sm = 0
+        if strict and gpu_sm <= 0:
+            issues.append(f"invalid_gpu_sm={runtime_health.get('gpu_sm')}")
+
+        warmup_reason = str(runtime_health.get("reason", "")).lower()
+        fatal_reason_markers = [
+            "quantization unsupported",
+            "gpt_oss_quantization_incompatible",
+            "server died",
+            "model load failed",
+            "model_load_failed",
+        ]
+        detected_reason_markers = [m for m in fatal_reason_markers if m in warmup_reason]
+        if detected_reason_markers:
+            issues.append(f"runtime_health_reason_markers={detected_reason_markers}")
+
+    if "model_status" in debug_df.columns:
+        statuses = debug_df["model_status"].astype(str)
+        bad_mask = statuses.str.startswith("disabled:")
+        bad_mask = bad_mask | statuses.str.contains("safe_mode", case=False, regex=False)
+        if bool(bad_mask.any()):
+            bad_values = sorted(set(statuses[bad_mask].tolist()))
+            issues.append(f"disabled_model_status={bad_values}")
+    else:
+        issues.append("missing_model_status_column")
+
+    if not source_counts:
+        issues.append("missing_source_column")
+    else:
+        safe_mode_sources = [
+            s for s in source_counts.keys() if "safe_mode" in str(s).lower()
+        ]
+        if safe_mode_sources:
+            issues.append(f"safe_mode_sources={sorted(safe_mode_sources)}")
+
+    log_files = sorted(out.glob("*.log"))
+    if log_files:
+        log_text = "\n".join(
+            p.read_text(encoding="utf-8", errors="ignore").lower() for p in log_files
+        )
+        fatal_markers = [
+            "cuda out of memory",
+            "model_load_failed",
+            "model_path_not_found",
+            "quantization unsupported",
+            "server died",
+            "model load failed",
+        ]
+        detected = [m for m in fatal_markers if m in log_text]
+        if detected:
+            issues.append(f"log_markers={detected}")
+
+    if issues:
+        raise RuntimeError(
+            "Kernel runtime health check failed: "
+            + "; ".join(issues)
+            + f"; source_counts={source_counts}"
+        )
+
+    print(
+        "Runtime health validation: "
+        f"rows={len(debug_df)} sources={source_counts}"
+    )
+
+
+def _utc_now_iso() -> str:
+    return dt.datetime.now(dt.timezone.utc).replace(microsecond=0).isoformat()
+
+
+def _write_preflight_status(path: str | Path, payload: dict[str, object]) -> Path:
+    output = Path(path).expanduser()
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+    return output
+
+
+def _load_preflight_status(path: str | Path) -> dict[str, object]:
+    source = Path(path).expanduser()
+    if not source.exists():
+        raise FileNotFoundError(
+            f"Preflight status file not found: {source}. "
+            "Run `kaggle-kernel-preflight-44 --stage all` first."
+        )
+    try:
+        data = json.loads(source.read_text(encoding="utf-8"))
+    except Exception as exc:
+        raise ValueError(f"Failed to parse preflight status file: {source}") from exc
+    if not isinstance(data, dict):
+        raise ValueError(f"Invalid preflight status payload in: {source}")
+    return data
+
+
+def _run_local_preflight_44(
+    *,
+    modules: list[str],
+) -> dict[str, object]:
+    if not modules:
+        return {
+            "ok": True,
+            "modules": [],
+            "details": "no_local_modules_configured",
+        }
+
+    cmd = [os.environ.get("PYTHON", os.sys.executable), "-m", "unittest", *modules]
+    print("Running local preflight tests:", " ".join(cmd))
+    started = time.perf_counter()
+    env = dict(os.environ)
+    cwd = Path.cwd()
+    src_path = str((cwd / "src").resolve())
+    existing_pp = env.get("PYTHONPATH", "").strip()
+    env["PYTHONPATH"] = f"{src_path}:{existing_pp}" if existing_pp else src_path
+
+    completed = subprocess.run(cmd, check=False, env=env)
+    elapsed = time.perf_counter() - started
+
+    if completed.returncode != 0:
+        raise RuntimeError(
+            "Local preflight tests failed: "
+            f"returncode={completed.returncode} modules={modules}"
+        )
+
+    return {
+        "ok": True,
+        "modules": modules,
+        "elapsed_sec": round(elapsed, 3),
+    }
+
+
+def _assert_preflight_ready_for_submit(
+    *,
+    status: dict[str, object],
+    notebook_dir: str,
+    competition: str,
+    max_age_minutes: int,
+) -> None:
+    if not bool(status.get("ok", False)):
+        raise RuntimeError(
+            "Preflight status indicates failure. "
+            "Run `kaggle-kernel-preflight-44 --stage all` and resolve failures."
+        )
+
+    stage = str(status.get("stage", "")).strip().lower()
+    if stage not in {"all", "kaggle"}:
+        raise RuntimeError(
+            "Preflight status does not include Kaggle validation stage. "
+            "Run `kaggle-kernel-preflight-44 --stage all`."
+        )
+
+    recorded_dir = str(status.get("notebook_dir", "")).strip()
+    if recorded_dir and recorded_dir != notebook_dir:
+        raise RuntimeError(
+            "Preflight notebook dir mismatch. "
+            f"status={recorded_dir} requested={notebook_dir}"
+        )
+
+    recorded_comp = str(status.get("competition", "")).strip()
+    if recorded_comp and recorded_comp != competition:
+        raise RuntimeError(
+            "Preflight competition mismatch. "
+            f"status={recorded_comp} requested={competition}"
+        )
+
+    finished_at = str(status.get("finished_at", "")).strip()
+    if not finished_at:
+        raise RuntimeError("Preflight status is missing `finished_at` timestamp.")
+
+    try:
+        parsed = dt.datetime.fromisoformat(finished_at.replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=dt.timezone.utc)
+    except Exception as exc:
+        raise RuntimeError(f"Invalid preflight timestamp: {finished_at}") from exc
+
+    age_minutes = (dt.datetime.now(dt.timezone.utc) - parsed).total_seconds() / 60.0
+    if max_age_minutes > 0 and age_minutes > max_age_minutes:
+        raise RuntimeError(
+            "Preflight status is stale. "
+            f"age_minutes={age_minutes:.1f} max={max_age_minutes}. "
+            "Re-run `kaggle-kernel-preflight-44 --stage all`."
+        )
 
 
 def cmd_solve(args: argparse.Namespace) -> None:
@@ -505,8 +1025,22 @@ def cmd_solve(args: argparse.Namespace) -> None:
         verbose=not args.quiet,
     )
 
+    input_ids = [str(x) for x in problems[args.id_col].tolist()]
+    submission_df, validation = sanitize_submission(
+        submission_df,
+        input_ids=input_ids,
+        default_answer=int(args.default_answer),
+    )
     out = save_submission(submission_df, args.output_csv)
     print(f"Saved submission file: {out}")
+    print(
+        "Submission validation: "
+        f"rows={validation.rows_after} "
+        f"duplicates={validation.duplicate_ids} "
+        f"invalid_fixed={validation.invalid_answers_fixed} "
+        f"missing_filled={validation.missing_ids_filled} "
+        f"range_normalized={validation.out_of_range_normalized}"
+    )
 
     if args.debug_json:
         debug_out = save_debug(debug_rows, args.debug_json)
@@ -559,7 +1093,7 @@ def cmd_benchmark_reference(args: argparse.Namespace) -> None:
         "total": total,
         "accuracy": accuracy,
         "profile": args.profile,
-        "model": args.model or os.getenv("AIMO_MODEL") or "openai/gpt-oss-120b",
+        "model": FORCED_MODEL,
     }
     summary_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
 
@@ -663,7 +1197,9 @@ def _build_sweep_trials(args: argparse.Namespace) -> list[dict[str, object]]:
     return trials[:8]
 
 
-def _compute_debug_metrics(debug_rows: list[dict[str, object]], merged: pd.DataFrame) -> dict[str, float]:
+def _compute_debug_metrics(
+    debug_rows: list[dict[str, object]], merged: pd.DataFrame
+) -> dict[str, float]:
     candidate_counts: list[float] = []
     consensus_ratios: list[float] = []
     verified_counts: list[float] = []
@@ -717,7 +1253,7 @@ def _render_recommended_command(
         f"--output-csv {output_csv}",
         f"--debug-json {debug_json}",
         f"--profile {args.profile}",
-        f"--model {args.model or os.getenv('AIMO_MODEL') or 'openai/gpt-oss-120b'}",
+        f"--model {FORCED_MODEL}",
     ]
 
     for key, value in sorted(overrides.items()):
@@ -801,7 +1337,7 @@ def cmd_benchmark_sweep(args: argparse.Namespace) -> None:
             "accuracy": accuracy,
             "runtime_sec": round(elapsed, 3),
             "profile": args.profile,
-            "model": args.model or os.getenv("AIMO_MODEL") or "openai/gpt-oss-120b",
+            "model": FORCED_MODEL,
             "overrides": overrides,
             **debug_metrics,
         }
@@ -850,7 +1386,9 @@ def cmd_kaggle_download(args: argparse.Namespace) -> None:
     api = KaggleAutomation(args.competition)
     extracted = api.download_competition_files(args.output_dir, unzip=not args.no_unzip)
     if extracted:
-        print(f"Downloaded and extracted {len(extracted)} files into {Path(args.output_dir).resolve()}")
+        print(
+            f"Downloaded and extracted {len(extracted)} files into {Path(args.output_dir).resolve()}"
+        )
     else:
         print(f"Downloaded archive into {Path(args.output_dir).resolve()}")
 
@@ -858,12 +1396,30 @@ def cmd_kaggle_download(args: argparse.Namespace) -> None:
 def cmd_kaggle_submit(args: argparse.Namespace) -> None:
     api = KaggleAutomation(args.competition)
 
-    message = args.message
-    if not message:
-        timestamp = dt.datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
-        message = f"AIMO3 automated submission ({timestamp})"
+    submission_path = Path(args.submission_csv).expanduser()
+    if not submission_path.exists():
+        raise FileNotFoundError(f"Submission file not found: {submission_path}")
 
-    response = api.submit(args.submission_csv, message=message)
+    raw_submission = pd.read_csv(submission_path)
+    sanitized_df, validation = sanitize_submission(
+        raw_submission,
+        default_answer=int(args.default_answer),
+    )
+    safe_submission_path = submission_path
+    if validation.changed:
+        safe_submission_path = submission_path.with_name(f"{submission_path.stem}.validated.csv")
+        save_submission(sanitized_df, safe_submission_path)
+        print(
+            "Sanitized submission before upload: "
+            f"{safe_submission_path} "
+            f"(duplicates={validation.duplicate_ids}, "
+            f"invalid_fixed={validation.invalid_answers_fixed}, "
+            f"range_normalized={validation.out_of_range_normalized})"
+        )
+
+    message = _build_submission_message(args.message, prefix="AIMO3 automated CSV submission")
+
+    response = api.submit(str(safe_submission_path), message=message)
     print(response)
 
     if args.wait:
@@ -878,6 +1434,263 @@ def cmd_kaggle_submit(args: argparse.Namespace) -> None:
             )
 
 
+def cmd_kaggle_submit_code(args: argparse.Namespace) -> None:
+    kernel_ref = _resolve_kernel_ref(args.kernel, args.kernel_dir)
+    api = KaggleAutomation(args.competition, default_username=_kernel_default_username(kernel_ref))
+
+    if not _check_daily_submission_quota(
+        api,
+        max_submissions_per_day=args.max_submissions_per_day,
+        scan_limit=args.daily_limit_scan,
+        skip_if_daily_limit_reached=args.skip_if_daily_limit_reached,
+    ):
+        return
+
+    kernel_version = (
+        int(args.kernel_version) if args.kernel_version and args.kernel_version > 0 else None
+    )
+    message = _build_submission_message(args.message, prefix="AIMO3 automated code submission")
+    response = api.submit_code(
+        kernel=kernel_ref,
+        output_file_name=args.output_file_name,
+        message=message,
+        kernel_version=kernel_version,
+    )
+    print(response)
+
+    if args.wait:
+        final_state = api.wait_for_latest(
+            poll_seconds=args.poll_seconds,
+            timeout_minutes=args.timeout_minutes,
+        )
+        if final_state:
+            print(
+                "Final status: "
+                f"{final_state.status} public={final_state.public_score} private={final_state.private_score}"
+            )
+
+
+def cmd_kaggle_kernel_pipeline(args: argparse.Namespace) -> None:
+    kernel_root, metadata = _read_kernel_metadata(args.kernel_dir)
+    kernel_ref = _resolve_kernel_ref(args.kernel, args.kernel_dir)
+    if args.strict_kernel_metadata:
+        _assert_kernel_metadata_safe(
+            metadata=metadata,
+            kernel_root=kernel_root,
+            competition=args.competition,
+        )
+
+    api = KaggleAutomation(args.competition, default_username=_kernel_default_username(kernel_ref))
+
+    pushed = api.push_kernel(
+        kernel_root,
+        timeout_sec=int(args.push_timeout_sec) if args.push_timeout_sec > 0 else None,
+    )
+    effective_kernel = pushed.kernel_ref or kernel_ref
+    print(
+        "Kernel pushed: "
+        f"kernel={effective_kernel} version={pushed.version_number} url={pushed.url or 'n/a'}"
+    )
+
+    kernel_state = api.wait_for_kernel(
+        effective_kernel,
+        poll_seconds=args.kernel_poll_seconds,
+        timeout_minutes=args.kernel_timeout_minutes,
+    )
+    if kernel_state.status != "complete":
+        try:
+            failure_outputs = api.download_kernel_output(
+                effective_kernel,
+                args.output_dir,
+                overwrite_dir=args.overwrite_output_dir,
+            )
+            print(
+                "Kernel failed; downloaded failure artifacts: "
+                f"{len(failure_outputs)} files at {Path(args.output_dir).resolve()}"
+            )
+        except Exception as exc:
+            print(f"Kernel failed and failure-artifact download also failed: {exc}")
+        raise RuntimeError(
+            "Kernel run did not complete successfully: "
+            f"status={kernel_state.status} failure={kernel_state.failure_message}"
+        )
+
+    output_files = api.download_kernel_output(
+        effective_kernel,
+        args.output_dir,
+        overwrite_dir=args.overwrite_output_dir,
+    )
+    print(f"Downloaded {len(output_files)} output files to {Path(args.output_dir).resolve()}")
+
+    required_path = Path(args.output_dir).expanduser() / args.required_output_file
+    if not required_path.exists():
+        raise FileNotFoundError(
+            "Required output file missing after kernel run: "
+            f"{required_path}. The notebook version is not submittable."
+        )
+
+    _, validation = validate_submission_file(
+        required_path,
+        default_answer=int(args.default_answer),
+        strict=args.strict_output_validation,
+    )
+    print(
+        "Output validation: "
+        f"format={validation.file_format} rows={validation.rows} "
+        f"columns_ok={validation.columns_ok} changed={validation.changed_by_sanitization}"
+    )
+    if validation.rows <= 0:
+        raise ValueError("Required output file is empty.")
+
+    _validate_kernel_runtime_health(
+        output_dir=args.output_dir,
+        strict=bool(args.strict_output_validation),
+    )
+
+    result_payload: dict[str, object] = {
+        "kernel": effective_kernel,
+        "kernel_version": pushed.version_number,
+        "output_dir": str(Path(args.output_dir).expanduser()),
+        "required_output_file": args.required_output_file,
+        "rows": int(validation.rows),
+        "submitted": False,
+    }
+
+    if args.no_submit:
+        print("Skipping competition submit (--no-submit).")
+        return result_payload
+
+    if not _check_daily_submission_quota(
+        api,
+        max_submissions_per_day=args.max_submissions_per_day,
+        scan_limit=args.daily_limit_scan,
+        skip_if_daily_limit_reached=args.skip_if_daily_limit_reached,
+    ):
+        return
+
+    kernel_version = pushed.version_number
+    if kernel_version is None and args.kernel_version and args.kernel_version > 0:
+        kernel_version = int(args.kernel_version)
+
+    message = _build_submission_message(args.message, prefix="AIMO3 kernel pipeline submission")
+    response = api.submit_code(
+        kernel=effective_kernel,
+        output_file_name=args.required_output_file,
+        message=message,
+        kernel_version=kernel_version,
+    )
+    print(response)
+
+    if args.wait:
+        final_state = api.wait_for_latest(
+            poll_seconds=args.poll_seconds,
+            timeout_minutes=args.timeout_minutes,
+        )
+        if final_state:
+            print(
+                "Final status: "
+                f"{final_state.status} public={final_state.public_score} private={final_state.private_score}"
+            )
+
+    result_payload["submitted"] = True
+    result_payload["kernel_version"] = kernel_version
+    return result_payload
+
+
+def cmd_kaggle_kernel_preflight_44(args: argparse.Namespace) -> None:
+    stage = str(args.stage).strip().lower()
+    status_payload: dict[str, object] = {
+        "command": "kaggle-kernel-preflight-44",
+        "ok": False,
+        "stage": stage,
+        "competition": args.competition,
+        "notebook_dir": args.notebook_dir,
+        "required_output_file": args.required_output_file,
+        "started_at": _utc_now_iso(),
+        "local": {"ok": False, "skipped": True},
+        "kaggle": {"ok": False, "skipped": True},
+    }
+
+    try:
+        if stage in {"local", "all"}:
+            local_result = _run_local_preflight_44(modules=list(args.local_test_modules))
+            status_payload["local"] = {"ok": True, "skipped": False, **local_result}
+
+        if stage in {"kaggle", "all"}:
+            kernel_args = argparse.Namespace(
+                competition=args.competition,
+                kernel_dir=args.notebook_dir,
+                kernel=args.kernel,
+                strict_kernel_metadata=True,
+                push_timeout_sec=args.push_timeout_sec,
+                kernel_poll_seconds=args.kernel_poll_seconds,
+                kernel_timeout_minutes=args.kernel_timeout_minutes,
+                output_dir=args.output_dir,
+                overwrite_output_dir=True,
+                required_output_file=args.required_output_file,
+                strict_output_validation=args.strict_runtime_health,
+                default_answer=0,
+                kernel_version=0,
+                no_submit=True,
+                message=args.message,
+                max_submissions_per_day=1,
+                daily_limit_scan=100,
+                skip_if_daily_limit_reached=True,
+                wait=False,
+                poll_seconds=20,
+                timeout_minutes=90,
+            )
+            kaggle_result = cmd_kaggle_kernel_pipeline(kernel_args) or {}
+            status_payload["kaggle"] = {"ok": True, "skipped": False, **kaggle_result}
+
+        status_payload["ok"] = True
+        status_payload["finished_at"] = _utc_now_iso()
+        status_path = _write_preflight_status(args.status_file, status_payload)
+        print(f"Preflight succeeded. Status written to: {status_path}")
+
+    except Exception as exc:
+        status_payload["ok"] = False
+        status_payload["error"] = f"{type(exc).__name__}: {exc}"
+        status_payload["finished_at"] = _utc_now_iso()
+        status_path = _write_preflight_status(args.status_file, status_payload)
+        print(f"Preflight failed. Status written to: {status_path}")
+        raise
+
+
+def cmd_kaggle_submit_44(args: argparse.Namespace) -> None:
+    status = _load_preflight_status(args.status_file)
+    _assert_preflight_ready_for_submit(
+        status=status,
+        notebook_dir=args.notebook_dir,
+        competition=args.competition,
+        max_age_minutes=args.max_preflight_age_minutes,
+    )
+
+    kernel_version_from_status = 0
+    kaggle_stage = status.get("kaggle", {})
+    if isinstance(kaggle_stage, dict):
+        try:
+            kernel_version_from_status = int(kaggle_stage.get("kernel_version", 0) or 0)
+        except Exception:
+            kernel_version_from_status = 0
+
+    submit_args = argparse.Namespace(
+        competition=args.competition,
+        kernel=args.kernel,
+        kernel_dir=args.notebook_dir,
+        kernel_version=kernel_version_from_status,
+        output_file_name=args.output_file_name,
+        message=args.message,
+        max_submissions_per_day=args.max_submissions_per_day,
+        daily_limit_scan=args.daily_limit_scan,
+        skip_if_daily_limit_reached=args.skip_if_daily_limit_reached,
+        wait=args.wait,
+        poll_seconds=args.poll_seconds,
+        timeout_minutes=args.timeout_minutes,
+    )
+    cmd_kaggle_submit_code(submit_args)
+
+
 def cmd_kaggle_pipeline(args: argparse.Namespace) -> None:
     solve_args = argparse.Namespace(**vars(args))
     cmd_solve(solve_args)
@@ -885,6 +1698,7 @@ def cmd_kaggle_pipeline(args: argparse.Namespace) -> None:
     submit_args = argparse.Namespace(
         competition=args.competition,
         submission_csv=args.output_csv,
+        default_answer=args.default_answer,
         message=args.message,
         wait=args.wait,
         poll_seconds=args.poll_seconds,
@@ -947,6 +1761,7 @@ def build_parser() -> argparse.ArgumentParser:
     ksub = sub.add_parser("kaggle-submit", help="Submit an existing CSV to Kaggle")
     ksub.add_argument("--competition", default="ai-mathematical-olympiad-progress-prize-3")
     ksub.add_argument("--submission-csv", required=True)
+    ksub.add_argument("--default-answer", type=int, default=0)
     ksub.add_argument("--message", default="")
     ksub.add_argument("--wait", action="store_true")
     ksub.add_argument("--poll-seconds", type=int, default=20)
@@ -970,6 +1785,172 @@ def build_parser() -> argparse.ArgumentParser:
     kpipe.add_argument("--timeout-minutes", type=int, default=60)
     kpipe.add_argument("--quiet", action="store_true")
     kpipe.set_defaults(func=cmd_kaggle_pipeline)
+
+    kcode = sub.add_parser(
+        "kaggle-submit-code",
+        help="Submit a notebook/kernel version output file (code competition flow)",
+    )
+    kcode.add_argument("--competition", default="ai-mathematical-olympiad-progress-prize-3")
+    kcode.add_argument(
+        "--kernel",
+        default="",
+        help="Kernel ref <owner>/<slug>. If omitted, use kernel-metadata.json id.",
+    )
+    kcode.add_argument(
+        "--kernel-dir",
+        default="kaggle_kernel_submission",
+        help="Directory containing kernel-metadata.json for fallback kernel id.",
+    )
+    kcode.add_argument("--kernel-version", type=int, default=0)
+    kcode.add_argument("--output-file-name", default="submission.parquet")
+    kcode.add_argument("--message", default="")
+    kcode.add_argument("--max-submissions-per-day", type=int, default=1)
+    kcode.add_argument("--daily-limit-scan", type=int, default=100)
+    kcode.add_argument("--skip-if-daily-limit-reached", action="store_true", default=True)
+    kcode.add_argument(
+        "--no-skip-if-daily-limit-reached",
+        action="store_false",
+        dest="skip_if_daily_limit_reached",
+    )
+    kcode.add_argument("--wait", action="store_true")
+    kcode.add_argument("--poll-seconds", type=int, default=20)
+    kcode.add_argument("--timeout-minutes", type=int, default=60)
+    kcode.set_defaults(func=cmd_kaggle_submit_code)
+
+    kkernel = sub.add_parser(
+        "kaggle-kernel-pipeline",
+        help="Hardened pipeline: push kernel -> wait run -> validate submission.parquet -> submit",
+    )
+    kkernel.add_argument("--competition", default="ai-mathematical-olympiad-progress-prize-3")
+    kkernel.add_argument("--kernel-dir", default="kaggle_kernel_submission")
+    kkernel.add_argument(
+        "--kernel",
+        default="",
+        help="Kernel ref <owner>/<slug>. If omitted, use kernel-metadata.json id.",
+    )
+    kkernel.add_argument(
+        "--strict-kernel-metadata",
+        action="store_true",
+        default=True,
+        help="Fail if kernel metadata is unsafe for this competition.",
+    )
+    kkernel.add_argument(
+        "--no-strict-kernel-metadata",
+        action="store_false",
+        dest="strict_kernel_metadata",
+    )
+    kkernel.add_argument("--push-timeout-sec", type=int, default=0)
+    kkernel.add_argument("--kernel-poll-seconds", type=int, default=20)
+    kkernel.add_argument("--kernel-timeout-minutes", type=int, default=180)
+    kkernel.add_argument("--output-dir", default="artifacts/kaggle_kernel_output_latest")
+    kkernel.add_argument(
+        "--overwrite-output-dir",
+        action="store_true",
+        default=True,
+        help="Delete output-dir before downloading kernel outputs.",
+    )
+    kkernel.add_argument(
+        "--no-overwrite-output-dir",
+        action="store_false",
+        dest="overwrite_output_dir",
+    )
+    kkernel.add_argument("--required-output-file", default="submission.parquet")
+    kkernel.add_argument("--strict-output-validation", action="store_true", default=True)
+    kkernel.add_argument(
+        "--no-strict-output-validation",
+        action="store_false",
+        dest="strict_output_validation",
+    )
+    kkernel.add_argument("--default-answer", type=int, default=0)
+    kkernel.add_argument("--kernel-version", type=int, default=0)
+    kkernel.add_argument("--no-submit", action="store_true")
+    kkernel.add_argument("--message", default="")
+    kkernel.add_argument("--max-submissions-per-day", type=int, default=1)
+    kkernel.add_argument("--daily-limit-scan", type=int, default=100)
+    kkernel.add_argument("--skip-if-daily-limit-reached", action="store_true", default=True)
+    kkernel.add_argument(
+        "--no-skip-if-daily-limit-reached",
+        action="store_false",
+        dest="skip_if_daily_limit_reached",
+    )
+    kkernel.add_argument("--wait", action="store_true")
+    kkernel.add_argument("--poll-seconds", type=int, default=20)
+    kkernel.add_argument("--timeout-minutes", type=int, default=90)
+    kkernel.set_defaults(func=cmd_kaggle_kernel_pipeline)
+
+    kpre44 = sub.add_parser(
+        "kaggle-kernel-preflight-44",
+        help="Staged preflight for the hardened 44/50 notebook (local checks + Kaggle no-submit validation).",
+    )
+    kpre44.add_argument("--competition", default="ai-mathematical-olympiad-progress-prize-3")
+    kpre44.add_argument(
+        "--notebook-dir",
+        default="kaggle_kernel_submission_44_50",
+        help="Notebook directory containing kernel-metadata.json and .ipynb for the 44/50 kernel.",
+    )
+    kpre44.add_argument(
+        "--kernel",
+        default="",
+        help="Kernel ref <owner>/<slug>. If omitted, use notebook-dir/kernel-metadata.json id.",
+    )
+    kpre44.add_argument("--stage", choices=["local", "kaggle", "all"], default="all")
+    kpre44.add_argument("--push-timeout-sec", type=int, default=0)
+    kpre44.add_argument("--kernel-poll-seconds", type=int, default=20)
+    kpre44.add_argument("--kernel-timeout-minutes", type=int, default=180)
+    kpre44.add_argument("--output-dir", default="artifacts/kaggle_kernel_output_44_latest")
+    kpre44.add_argument("--required-output-file", default="submission.parquet")
+    kpre44.add_argument("--strict-runtime-health", action="store_true", default=True)
+    kpre44.add_argument(
+        "--no-strict-runtime-health",
+        action="store_false",
+        dest="strict_runtime_health",
+    )
+    kpre44.add_argument("--message", default="")
+    kpre44.add_argument("--status-file", default="artifacts/preflight_44_status.json")
+    kpre44.add_argument(
+        "--local-test-modules",
+        nargs="+",
+        default=[
+            "tests.test_notebook_44_50_contract",
+            "tests.test_notebook_44_50_local_gate",
+            "tests.test_pipeline",
+            "tests.test_cli",
+        ],
+        help="Python unittest modules executed in local stage.",
+    )
+    kpre44.set_defaults(func=cmd_kaggle_kernel_preflight_44)
+
+    ksubmit44 = sub.add_parser(
+        "kaggle-submit-44",
+        help="Submit 44/50 notebook output only if staged preflight status is present and fresh.",
+    )
+    ksubmit44.add_argument("--competition", default="ai-mathematical-olympiad-progress-prize-3")
+    ksubmit44.add_argument(
+        "--notebook-dir",
+        default="kaggle_kernel_submission_44_50",
+        help="Notebook directory used by preflight.",
+    )
+    ksubmit44.add_argument(
+        "--kernel",
+        default="",
+        help="Kernel ref <owner>/<slug>. If omitted, use notebook-dir/kernel-metadata.json id.",
+    )
+    ksubmit44.add_argument("--output-file-name", default="submission.parquet")
+    ksubmit44.add_argument("--message", default="")
+    ksubmit44.add_argument("--status-file", default="artifacts/preflight_44_status.json")
+    ksubmit44.add_argument("--max-preflight-age-minutes", type=int, default=240)
+    ksubmit44.add_argument("--max-submissions-per-day", type=int, default=1)
+    ksubmit44.add_argument("--daily-limit-scan", type=int, default=100)
+    ksubmit44.add_argument("--skip-if-daily-limit-reached", action="store_true", default=True)
+    ksubmit44.add_argument(
+        "--no-skip-if-daily-limit-reached",
+        action="store_false",
+        dest="skip_if_daily_limit_reached",
+    )
+    ksubmit44.add_argument("--wait", action="store_true")
+    ksubmit44.add_argument("--poll-seconds", type=int, default=20)
+    ksubmit44.add_argument("--timeout-minutes", type=int, default=60)
+    ksubmit44.set_defaults(func=cmd_kaggle_submit_44)
 
     return parser
 

@@ -1,0 +1,128 @@
+id,problem,answer,category
+xhard_001,Let S = 82^43486 + 96^148182 - 33^29248 + 34^66931. Compute S modulo 100000. Return the least nonnegative residue.,76383,number_theory_power_mix
+xhard_002,"Define A = sum_{k=0}^{46} (-1)^k * C(46, k) * (64+k)^48. Find A modulo 65521.",35683,combinatorics_finite_difference
+xhard_003,"Sequence (u_n) satisfies u_(n+2) = 14*u_(n+1) + 70*u_n with u_0=80416, u_1=52231. Compute u_1292195 modulo 99991.",29777,recurrence_linear
+xhard_004,"Let F_0=0, F_1=1, and F_(t+2)=F_(t+1)+F_t. Compute B = F_227219606460*F_227219606461 + F_227219877238 modulo 99991.",13032,number_theory_fibonacci
+xhard_005,"Count integer tuples (x_1,...,x_9) with x_1+...+x_9=102 and 0 <= x_i <= 18 for all i. Give the count modulo 100000.",98614,combinatorics_bounded_compositions
+xhard_006,How many surjective functions exist from a set of size 29 to a set of size 12? Return the answer modulo 99991.,73990,combinatorics_surjection
+xhard_007,"Let P(x)=(1+x)^93(1+x^2)^61(1+x^3)^49. Find the coefficient of x^93 in P(x), modulo 99989.",25791,algebra_polynomial_coefficient
+xhard_008,"Let M=[[10,22,26],[17,45,41],[14,47,6]]. Compute trace(M^612449) modulo 99991.",39095,linear_algebra_matrix_power
+xhard_009,"Let x be the smallest nonnegative integer such that x ≡ 18 (mod 107), x ≡ 65 (mod 103), and x ≡ 31 (mod 101). Compute x^2 + 23x + 55 modulo 50021.",5558,number_theory_crt
+xhard_010,"In the coordinate plane, triangle vertices are A=(15,37), B=(146,14), C=(69,99). Let T = 2*Area(ABC) and Q = AB^2 + BC^2 + CA^2. Compute T^11 + Q^8 + TQ modulo 99991.",40988,geometry_coordinate
+xhard_011,"For a real number t, let floor(t) denote the greatest integer <= t. Define S = sum_(i=0)^(107720614787-1) floor((239203143i+859821065)/65521) + 74 * sum_(i=0)^(107720614787-1) floor((573974203i+285044239)/65521). Compute S + (239203143+859821065+573974203+285044239)^3 modulo 50021.",35392,number_theory_floor_sum
+xhard_012,"Let p=1009. Compute T = C(639035291477880,406242905224583) + 14*C(692208114231452,191138570425129) + 639035291477880+191138570425129 modulo p. Return the least nonnegative residue.",203,number_theory_lucas_binomial
+xhard_013,"Define sequence (u_t) by u_(t+4)=20u_(t+3)+75u_(t+2)+113u_(t+1)+38u_t, with initial values u_0=27224, u_1=67396, u_2=8743, u_3=41693. Compute u_5229031 modulo 99991.",26288,recurrence_order4
+xhard_014,"Let G be the complete tripartite graph K_(83,158,148). How many spanning trees does G have? Return the result modulo 60013.",38988,combinatorics_graph_spanning_trees
+xhard_015,"Let N = 2^7 * 3^7 * 5^4. For each divisor d of N, define tau(d) as the number of positive divisors of d and phi(d) as Euler's totient. Compute
+S = sum_(d|N) phi(d) * (tau(d)^2 + 2*tau(d) + 6) modulo 100000.",11579,number_theory_divisor_totient_sum
+xhard_016,"Let M = 5610 and N = 173057766320. Let C be the number of integers x with 1 <= x <= N and gcd(x,M)=1. Compute C^2 + 5C + 189 modulo 99991.",27721,number_theory_coprime_count
+xhard_017,Let S = 59^158622 + 78^205953 - 76^79285 + 34^59576. Compute S modulo 99989. Return the least nonnegative residue.,62453,number_theory_power_mix
+xhard_018,"Define A = sum_{k=0}^{61} (-1)^k * C(61, k) * (246+k)^69. Find A modulo 65521.",2284,combinatorics_finite_difference
+xhard_019,"Sequence (u_n) satisfies u_(n+2) = 55*u_(n+1) + 124*u_n with u_0=3430, u_1=76422. Compute u_492354 modulo 100000.",1490,recurrence_linear
+xhard_020,"Let F_0=0, F_1=1, and F_(t+2)=F_(t+1)+F_t. Compute B = F_770553849987*F_770553849988 + F_770554599767 modulo 99989.",44286,number_theory_fibonacci
+xhard_021,"Count integer tuples (x_1,...,x_9) with x_1+...+x_9=155 and 0 <= x_i <= 30 for all i. Give the count modulo 50021.",33442,combinatorics_bounded_compositions
+xhard_022,How many surjective functions exist from a set of size 35 to a set of size 8? Return the answer modulo 60013.,49790,combinatorics_surjection
+xhard_023,"Let P(x)=(1+x)^82(1+x^2)^66(1+x^3)^58. Find the coefficient of x^141 in P(x), modulo 60013.",51571,algebra_polynomial_coefficient
+xhard_024,"Let M=[[5,9,45],[31,32,47],[33,7,45]]. Compute trace(M^1152702) modulo 99991.",62286,linear_algebra_matrix_power
+xhard_025,"Let x be the smallest nonnegative integer such that x ≡ 61 (mod 109), x ≡ 79 (mod 107), and x ≡ 35 (mod 101). Compute x^2 + 79x + 111 modulo 99989.",67934,number_theory_crt
+xhard_026,"In the coordinate plane, triangle vertices are A=(52,65), B=(140,79), C=(60,203). Let T = 2*Area(ABC) and Q = AB^2 + BC^2 + CA^2. Compute T^10 + Q^7 + TQ modulo 99991.",74419,geometry_coordinate
+xhard_027,"For a real number t, let floor(t) denote the greatest integer <= t. Define S = sum_(i=0)^(941883097353-1) floor((91351229i+12069700)/50021) + 350 * sum_(i=0)^(941883097353-1) floor((206486543i+962168671)/50021). Compute S + (91351229+12069700+206486543+962168671)^3 modulo 99989.",71173,number_theory_floor_sum
+xhard_028,"Let p=10007. Compute T = C(569922528222396,565149854288719) + 28*C(827489988854043,260523637527006) + 569922528222396+260523637527006 modulo p. Return the least nonnegative residue.",7360,number_theory_lucas_binomial
+xhard_029,"Define sequence (u_t) by u_(t+4)=103u_(t+3)+29u_(t+2)+25u_(t+1)+112u_t, with initial values u_0=19032, u_1=13583, u_2=36161, u_3=83979. Compute u_6417743 modulo 100000.",20667,recurrence_order4
+xhard_030,"Let G be the complete tripartite graph K_(58,28,20). How many spanning trees does G have? Return the result modulo 65521.",8541,combinatorics_graph_spanning_trees
+xhard_031,"Let N = 2^9 * 3^5 * 5^5. For each divisor d of N, define tau(d) as the number of positive divisors of d and phi(d) as Euler's totient. Compute
+S = sum_(d|N) phi(d) * (tau(d)^2 + 2*tau(d) + 9) modulo 100000.",75549,number_theory_divisor_totient_sum
+xhard_032,"Let M = 25194 and N = 595320565961. Let C be the number of integers x with 1 <= x <= N and gcd(x,M)=1. Compute C^2 + 27C + 357 modulo 100000.",78357,number_theory_coprime_count
+xhard_033,Let S = 118^268644 + 132^165112 - 79^108018 + 23^86997. Compute S modulo 60013. Return the least nonnegative residue.,57008,number_theory_power_mix
+xhard_034,"Define A = sum_{k=0}^{45} (-1)^k * C(45, k) * (152+k)^48. Find A modulo 50021.",25509,combinatorics_finite_difference
+xhard_035,"Sequence (u_n) satisfies u_(n+2) = 116*u_(n+1) + 52*u_n with u_0=29997, u_1=9288. Compute u_419471 modulo 60013.",56417,recurrence_linear
+xhard_036,"Let F_0=0, F_1=1, and F_(t+2)=F_(t+1)+F_t. Compute B = F_762080731651*F_762080731652 + F_762081851363 modulo 99991.",71131,number_theory_fibonacci
+xhard_037,"Count integer tuples (x_1,...,x_9) with x_1+...+x_9=168 and 0 <= x_i <= 21 for all i. Give the count modulo 100000.",92145,combinatorics_bounded_compositions
+xhard_038,How many surjective functions exist from a set of size 21 to a set of size 7? Return the answer modulo 100000.,37920,combinatorics_surjection
+xhard_039,"Let P(x)=(1+x)^69(1+x^2)^58(1+x^3)^26. Find the coefficient of x^68 in P(x), modulo 99991.",7228,algebra_polynomial_coefficient
+xhard_040,"Let M=[[19,4,31],[49,19,8],[9,37,33]]. Compute trace(M^555550) modulo 100000.",86049,linear_algebra_matrix_power
+xhard_041,"Let x be the smallest nonnegative integer such that x ≡ 42 (mod 109), x ≡ 26 (mod 103), and x ≡ 11 (mod 101). Compute x^2 + 37x + 140 modulo 65521.",60867,number_theory_crt
+xhard_042,"In the coordinate plane, triangle vertices are A=(9,14), B=(131,28), C=(60,120). Let T = 2*Area(ABC) and Q = AB^2 + BC^2 + CA^2. Compute T^4 + Q^5 + TQ modulo 99989.",151,geometry_coordinate
+xhard_043,"For a real number t, let floor(t) denote the greatest integer <= t. Define S = sum_(i=0)^(477755138237-1) floor((135099196i+719641625)/65521) + 10 * sum_(i=0)^(477755138237-1) floor((555092959i+895728631)/65521). Compute S + (135099196+719641625+555092959+895728631)^3 modulo 50021.",43472,number_theory_floor_sum
+xhard_044,"Let p=10007. Compute T = C(334101772870509,322311680419330) + 8*C(941496842730364,151933688735599) + 334101772870509+151933688735599 modulo p. Return the least nonnegative residue.",3769,number_theory_lucas_binomial
+xhard_045,"Define sequence (u_t) by u_(t+4)=52u_(t+3)+67u_(t+2)+114u_(t+1)+93u_t, with initial values u_0=17368, u_1=36108, u_2=94479, u_3=3688. Compute u_5688513 modulo 99989.",17405,recurrence_order4
+xhard_046,"Let G be the complete tripartite graph K_(161,49,173). How many spanning trees does G have? Return the result modulo 99989.",50749,combinatorics_graph_spanning_trees
+xhard_047,"Let N = 2^11 * 3^8 * 5^6. For each divisor d of N, define tau(d) as the number of positive divisors of d and phi(d) as Euler's totient. Compute
+S = sum_(d|N) phi(d) * (tau(d)^2 + 6*tau(d) + 3) modulo 99989.",44316,number_theory_divisor_totient_sum
+xhard_048,"Let M = 58786 and N = 202145337629. Let C be the number of integers x with 1 <= x <= N and gcd(x,M)=1. Compute C^2 + 13C + 106 modulo 60013.",38431,number_theory_coprime_count
+xhard_049,Let S = 47^165732 + 83^105066 - 98^78995 + 56^38394. Compute S modulo 60013. Return the least nonnegative residue.,55062,number_theory_power_mix
+xhard_050,"Define A = sum_{k=0}^{63} (-1)^k * C(63, k) * (146+k)^70. Find A modulo 100000.",0,combinatorics_finite_difference
+xhard_051,"Sequence (u_n) satisfies u_(n+2) = 14*u_(n+1) + 11*u_n with u_0=36389, u_1=11153. Compute u_1347442 modulo 100000.",53221,recurrence_linear
+xhard_052,"Let F_0=0, F_1=1, and F_(t+2)=F_(t+1)+F_t. Compute B = F_339243346699*F_339243346700 + F_339243967345 modulo 50021.",26426,number_theory_fibonacci
+xhard_053,"Count integer tuples (x_1,...,x_7) with x_1+...+x_7=62 and 0 <= x_i <= 12 for all i. Give the count modulo 100000.",41705,combinatorics_bounded_compositions
+xhard_054,How many surjective functions exist from a set of size 27 to a set of size 14? Return the answer modulo 50021.,47618,combinatorics_surjection
+xhard_055,"Let P(x)=(1+x)^83(1+x^2)^42(1+x^3)^59. Find the coefficient of x^145 in P(x), modulo 100000.",94629,algebra_polynomial_coefficient
+xhard_056,"Let M=[[42,10,15],[5,19,48],[42,49,5]]. Compute trace(M^1022154) modulo 50021.",23766,linear_algebra_matrix_power
+xhard_057,"Let x be the smallest nonnegative integer such that x ≡ 46 (mod 101), x ≡ 82 (mod 109), and x ≡ 93 (mod 103). Compute x^2 + 24x + 84 modulo 50021.",44463,number_theory_crt
+xhard_058,"In the coordinate plane, triangle vertices are A=(17,75), B=(176,14), C=(52,140). Let T = 2*Area(ABC) and Q = AB^2 + BC^2 + CA^2. Compute T^4 + Q^3 + TQ modulo 50021.",7485,geometry_coordinate
+xhard_059,"For a real number t, let floor(t) denote the greatest integer <= t. Define S = sum_(i=0)^(290334014507-1) floor((417013269i+154406703)/65521) + 293 * sum_(i=0)^(290334014507-1) floor((311620024i+899880791)/65521). Compute S + (417013269+154406703+311620024+899880791)^3 modulo 65521.",28370,number_theory_floor_sum
+xhard_060,"Let p=1009. Compute T = C(968688379228869,306555756103093) + 17*C(317366523086707,215842008115182) + 968688379228869+215842008115182 modulo p. Return the least nonnegative residue.",60,number_theory_lucas_binomial
+xhard_061,"Define sequence (u_t) by u_(t+4)=81u_(t+3)+82u_(t+2)+73u_(t+1)+3u_t, with initial values u_0=17995, u_1=89246, u_2=82573, u_3=17360. Compute u_4907453 modulo 99989.",36551,recurrence_order4
+xhard_062,"Let G be the complete tripartite graph K_(151,42,49). How many spanning trees does G have? Return the result modulo 50021.",48222,combinatorics_graph_spanning_trees
+xhard_063,"Let N = 2^9 * 3^6 * 5^6. For each divisor d of N, define tau(d) as the number of positive divisors of d and phi(d) as Euler's totient. Compute
+S = sum_(d|N) phi(d) * (tau(d)^2 + 6*tau(d) + 5) modulo 99991.",68483,number_theory_divisor_totient_sum
+xhard_064,"Let M = 53295 and N = 236939539845. Let C be the number of integers x with 1 <= x <= N and gcd(x,M)=1. Compute C^2 + 35C + 348 modulo 100000.",11792,number_theory_coprime_count
+xhard_065,Let S = 154^176431 + 150^65110 - 9^57930 + 77^14441. Compute S modulo 60013. Return the least nonnegative residue.,35702,number_theory_power_mix
+xhard_066,"Define A = sum_{k=0}^{60} (-1)^k * C(60, k) * (241+k)^67. Find A modulo 100000.",0,combinatorics_finite_difference
+xhard_067,"Sequence (u_n) satisfies u_(n+2) = 95*u_(n+1) + 101*u_n with u_0=2556, u_1=6871. Compute u_1432048 modulo 50021.",44475,recurrence_linear
+xhard_068,"Let F_0=0, F_1=1, and F_(t+2)=F_(t+1)+F_t. Compute B = F_759097501552*F_759097501553 + F_759098503358 modulo 60013.",31677,number_theory_fibonacci
+xhard_069,"Count integer tuples (x_1,...,x_9) with x_1+...+x_9=129 and 0 <= x_i <= 18 for all i. Give the count modulo 100000.",70315,combinatorics_bounded_compositions
+xhard_070,How many surjective functions exist from a set of size 26 to a set of size 13? Return the answer modulo 100000.,48000,combinatorics_surjection
+xhard_071,"Let P(x)=(1+x)^78(1+x^2)^57(1+x^3)^47. Find the coefficient of x^40 in P(x), modulo 60013.",7988,algebra_polynomial_coefficient
+xhard_072,"Let M=[[43,29,3],[3,31,44],[47,9,42]]. Compute trace(M^943419) modulo 65521.",5027,linear_algebra_matrix_power
+xhard_073,"Let x be the smallest nonnegative integer such that x ≡ 78 (mod 103), x ≡ 92 (mod 109), and x ≡ 80 (mod 107). Compute x^2 + 39x + 59 modulo 60013.",25408,number_theory_crt
+xhard_074,"In the coordinate plane, triangle vertices are A=(47,21), B=(98,19), C=(49,100). Let T = 2*Area(ABC) and Q = AB^2 + BC^2 + CA^2. Compute T^9 + Q^7 + TQ modulo 99991.",42582,geometry_coordinate
+xhard_075,"For a real number t, let floor(t) denote the greatest integer <= t. Define S = sum_(i=0)^(588127269143-1) floor((62054835i+976794188)/50021) + 46 * sum_(i=0)^(588127269143-1) floor((984734806i+758967720)/50021). Compute S + (62054835+976794188+984734806+758967720)^3 modulo 99991.",63315,number_theory_floor_sum
+xhard_076,"Let p=2003. Compute T = C(163833873122660,43981680830245) + 27*C(71420020000019,799502826147) + 163833873122660+799502826147 modulo p. Return the least nonnegative residue.",1176,number_theory_lucas_binomial
+xhard_077,"Define sequence (u_t) by u_(t+4)=12u_(t+3)+117u_(t+2)+38u_(t+1)+106u_t, with initial values u_0=29853, u_1=39570, u_2=55785, u_3=4794. Compute u_6118970 modulo 99991.",94901,recurrence_order4
+xhard_078,"Let G be the complete tripartite graph K_(77,163,84). How many spanning trees does G have? Return the result modulo 50021.",28823,combinatorics_graph_spanning_trees
+xhard_079,"Let N = 2^11 * 3^7 * 5^7. For each divisor d of N, define tau(d) as the number of positive divisors of d and phi(d) as Euler's totient. Compute
+S = sum_(d|N) phi(d) * (tau(d)^2 + 2*tau(d) + 5) modulo 99989.",95610,number_theory_divisor_totient_sum
+xhard_080,"Let M = 21318 and N = 822562685162. Let C be the number of integers x with 1 <= x <= N and gcd(x,M)=1. Compute C^2 + 49C + 51 modulo 99991.",81060,number_theory_coprime_count
+xhard_081,Let S = 10^111154 + 142^248747 - 114^117655 + 67^38526. Compute S modulo 60013. Return the least nonnegative residue.,16025,number_theory_power_mix
+xhard_082,"Define A = sum_{k=0}^{64} (-1)^k * C(64, k) * (284+k)^66. Find A modulo 99989.",95817,combinatorics_finite_difference
+xhard_083,"Sequence (u_n) satisfies u_(n+2) = 65*u_(n+1) + 70*u_n with u_0=19058, u_1=81503. Compute u_274435 modulo 99991.",64405,recurrence_linear
+xhard_084,"Let F_0=0, F_1=1, and F_(t+2)=F_(t+1)+F_t. Compute B = F_850014949314*F_850014949315 + F_850016269963 modulo 99989.",42715,number_theory_fibonacci
+xhard_085,"Count integer tuples (x_1,...,x_10) with x_1+...+x_10=129 and 0 <= x_i <= 24 for all i. Give the count modulo 100000.",58410,combinatorics_bounded_compositions
+xhard_086,How many surjective functions exist from a set of size 30 to a set of size 11? Return the answer modulo 99991.,75929,combinatorics_surjection
+xhard_087,"Let P(x)=(1+x)^43(1+x^2)^40(1+x^3)^54. Find the coefficient of x^70 in P(x), modulo 99989.",80954,algebra_polynomial_coefficient
+xhard_088,"Let M=[[5,27,7],[47,6,47],[45,7,33]]. Compute trace(M^389721) modulo 65521.",45909,linear_algebra_matrix_power
+xhard_089,"Let x be the smallest nonnegative integer such that x ≡ 36 (mod 107), x ≡ 69 (mod 103), and x ≡ 77 (mod 109). Compute x^2 + 39x + 17 modulo 99989.",43075,number_theory_crt
+xhard_090,"In the coordinate plane, triangle vertices are A=(18,32), B=(115,89), C=(37,121). Let T = 2*Area(ABC) and Q = AB^2 + BC^2 + CA^2. Compute T^7 + Q^6 + TQ modulo 100000.",76864,geometry_coordinate
+xhard_091,"For a real number t, let floor(t) denote the greatest integer <= t. Define S = sum_(i=0)^(600508736611-1) floor((386401766i+599845060)/99991) + 364 * sum_(i=0)^(600508736611-1) floor((567181816i+970500880)/99991). Compute S + (386401766+599845060+567181816+970500880)^3 modulo 60013.",49828,number_theory_floor_sum
+xhard_092,"Let p=2003. Compute T = C(410802776823771,135467880345211) + 13*C(688114431962553,436010100411613) + 410802776823771+436010100411613 modulo p. Return the least nonnegative residue.",793,number_theory_lucas_binomial
+xhard_093,"Define sequence (u_t) by u_(t+4)=3u_(t+3)+86u_(t+2)+6u_(t+1)+45u_t, with initial values u_0=28950, u_1=47803, u_2=25423, u_3=5349. Compute u_4965146 modulo 50021.",19522,recurrence_order4
+xhard_094,"Let G be the complete tripartite graph K_(25,153,150). How many spanning trees does G have? Return the result modulo 50021.",38209,combinatorics_graph_spanning_trees
+xhard_095,"Let N = 2^11 * 3^6 * 5^7. For each divisor d of N, define tau(d) as the number of positive divisors of d and phi(d) as Euler's totient. Compute
+S = sum_(d|N) phi(d) * (tau(d)^2 + 3*tau(d) + 9) modulo 100000.",41694,number_theory_divisor_totient_sum
+xhard_096,"Let M = 35530 and N = 939646268821. Let C be the number of integers x with 1 <= x <= N and gcd(x,M)=1. Compute C^2 + 37C + 122 modulo 60013.",51387,number_theory_coprime_count
+xhard_097,Let S = 98^92563 + 94^204191 - 51^54289 + 76^73263. Compute S modulo 65521. Return the least nonnegative residue.,7291,number_theory_power_mix
+xhard_098,"Define A = sum_{k=0}^{62} (-1)^k * C(62, k) * (161+k)^66. Find A modulo 99989.",98450,combinatorics_finite_difference
+xhard_099,"Sequence (u_n) satisfies u_(n+2) = 24*u_(n+1) + 62*u_n with u_0=4995, u_1=35299. Compute u_741485 modulo 65521.",4253,recurrence_linear
+xhard_100,"Let F_0=0, F_1=1, and F_(t+2)=F_(t+1)+F_t. Compute B = F_957507524402*F_957507524403 + F_957509137827 modulo 100000.",39620,number_theory_fibonacci
+xhard_101,"Count integer tuples (x_1,...,x_12) with x_1+...+x_12=185 and 0 <= x_i <= 20 for all i. Give the count modulo 99989.",70513,combinatorics_bounded_compositions
+xhard_102,How many surjective functions exist from a set of size 27 to a set of size 14? Return the answer modulo 99989.,66941,combinatorics_surjection
+xhard_103,"Let P(x)=(1+x)^67(1+x^2)^76(1+x^3)^60. Find the coefficient of x^124 in P(x), modulo 65521.",9054,algebra_polynomial_coefficient
+xhard_104,"Let M=[[11,36,29],[14,30,47],[24,28,6]]. Compute trace(M^1294300) modulo 99991.",83903,linear_algebra_matrix_power
+xhard_105,"Let x be the smallest nonnegative integer such that x ≡ 42 (mod 103), x ≡ 53 (mod 109), and x ≡ 42 (mod 107). Compute x^2 + 63x + 110 modulo 99989.",87497,number_theory_crt
+xhard_106,"In the coordinate plane, triangle vertices are A=(47,68), B=(131,10), C=(70,111). Let T = 2*Area(ABC) and Q = AB^2 + BC^2 + CA^2. Compute T^7 + Q^8 + TQ modulo 99991.",35259,geometry_coordinate
+xhard_107,"For a real number t, let floor(t) denote the greatest integer <= t. Define S = sum_(i=0)^(831098449464-1) floor((459447658i+748619590)/65521) + 250 * sum_(i=0)^(831098449464-1) floor((391453788i+743099421)/65521). Compute S + (459447658+748619590+391453788+743099421)^3 modulo 99991.",48673,number_theory_floor_sum
+xhard_108,"Let p=5003. Compute T = C(317677012657878,169432508501364) + 27*C(322758578671774,140498356045280) + 317677012657878+140498356045280 modulo p. Return the least nonnegative residue.",1163,number_theory_lucas_binomial
+xhard_109,"Define sequence (u_t) by u_(t+4)=64u_(t+3)+80u_(t+2)+50u_(t+1)+5u_t, with initial values u_0=12591, u_1=32382, u_2=26335, u_3=6420. Compute u_5179903 modulo 50021.",16547,recurrence_order4
+xhard_110,"Let G be the complete tripartite graph K_(175,161,75). How many spanning trees does G have? Return the result modulo 60013.",58112,combinatorics_graph_spanning_trees
+xhard_111,"Let N = 2^11 * 3^8 * 5^6. For each divisor d of N, define tau(d) as the number of positive divisors of d and phi(d) as Euler's totient. Compute
+S = sum_(d|N) phi(d) * (tau(d)^2 + 3*tau(d) + 8) modulo 50021.",43573,number_theory_divisor_totient_sum
+xhard_112,"Let M = 4290 and N = 721091903195. Let C be the number of integers x with 1 <= x <= N and gcd(x,M)=1. Compute C^2 + 77C + 16 modulo 50021.",11238,number_theory_coprime_count
+xhard_113,Let S = 193^229104 + 58^206877 - 106^156995 + 71^81738. Compute S modulo 50021. Return the least nonnegative residue.,39586,number_theory_power_mix
+xhard_114,"Define A = sum_{k=0}^{58} (-1)^k * C(58, k) * (166+k)^63. Find A modulo 99991.",12746,combinatorics_finite_difference
+xhard_115,"Sequence (u_n) satisfies u_(n+2) = 68*u_(n+1) + 45*u_n with u_0=35245, u_1=51416. Compute u_1516182 modulo 65521.",19464,recurrence_linear
+xhard_116,"Let F_0=0, F_1=1, and F_(t+2)=F_(t+1)+F_t. Compute B = F_935700689672*F_935700689673 + F_935701605042 modulo 65521.",6500,number_theory_fibonacci
+xhard_117,"Count integer tuples (x_1,...,x_8) with x_1+...+x_8=73 and 0 <= x_i <= 15 for all i. Give the count modulo 65521.",60830,combinatorics_bounded_compositions
+xhard_118,How many surjective functions exist from a set of size 22 to a set of size 8? Return the answer modulo 99989.,35825,combinatorics_surjection
+xhard_119,"Let P(x)=(1+x)^48(1+x^2)^86(1+x^3)^34. Find the coefficient of x^149 in P(x), modulo 99991.",27641,algebra_polynomial_coefficient
+xhard_120,"Let M=[[25,10,31],[26,20,44],[39,15,12]]. Compute trace(M^1487225) modulo 60013.",5312,linear_algebra_matrix_power

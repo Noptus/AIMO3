@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "telegram": {
+      "type": "stdio",
+      "command": "telegram-claude-mcp",
+      "args": [],
+      "env": {
+        "TELEGRAM_BOT_TOKEN": "REPLACE_WITH_BOT_TOKEN",
+        "AUTHORIZED_CHAT_ID": "REPLACE_WITH_CHAT_ID"
+      }
+    }
+  }
+}

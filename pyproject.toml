@@ -36,6 +36,9 @@ Repository = "https://github.com/raphaelcaillon/AIMO3"
 Issues = "https://github.com/raphaelcaillon/AIMO3/issues"
 
 [project.optional-dependencies]
+agentic = [
+  "langgraph>=0.6.0,<0.7.0",
+]
 dev = [
   "pytest>=8.3.0",
   "ruff>=0.6.0",

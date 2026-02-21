@@ -3,6 +3,7 @@ import unittest
 from aimo3.parsing import (
     parse_answer_from_text,
     parse_modulus,
+    parse_structured_result,
     select_weighted_mode,
 )
 
@@ -28,6 +29,13 @@ class ParsingTests(unittest.TestCase):
         text = "What is the remainder when n is divided by $99991$?"
         self.assertEqual(parse_modulus(text), 99991)
 
+    def test_parse_modulus_prefers_final_modulus_when_multiple_present(self) -> None:
+        text = (
+            "Let x satisfy x ≡ 18 (mod 107), x ≡ 65 (mod 103), and x ≡ 31 (mod 101). "
+            "Compute x^2 + 23x + 55 modulo 50021."
+        )
+        self.assertEqual(parse_modulus(text), 50021)
+
     def test_parse_answer_prefers_final_answer_tag(self) -> None:
         text = "Some reasoning... FINAL_ANSWER: 12345"
         parsed = parse_answer_from_text(text)
@@ -45,6 +53,21 @@ class ParsingTests(unittest.TestCase):
         parsed = parse_answer_from_text(text)
         self.assertIsNone(parsed.answer)
         self.assertEqual(parsed.source, "none")
+
+    def test_parse_answer_from_result_json(self) -> None:
+        text = (
+            'RESULT_JSON: {"answer": 424242, "method": "modular-check", '
+            '"independent_check_passed": true}\n'
+            "FINAL_ANSWER: 424242"
+        )
+        parsed = parse_answer_from_text(text)
+        self.assertEqual(parsed.answer, 24242)
+        self.assertEqual(parsed.source, "structured_json")
+
+        structured = parse_structured_result(text)
+        self.assertEqual(structured.answer, 24242)
+        self.assertEqual(structured.method, "modular-check")
+        self.assertTrue(structured.independent_check_passed)
 
     def test_weighted_mode(self) -> None:
         values = [1, 2, 2, 3]

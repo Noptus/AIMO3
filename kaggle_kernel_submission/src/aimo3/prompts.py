@@ -20,14 +20,21 @@ class ProblemProfile:
     archetype: str
 
 
-SYSTEM_PROMPT = """You are an olympiad-level mathematical reasoning assistant.
-Solve integer-answer competition problems with rigorous steps and strong self-checks.
+SYSTEM_PROMPT = """You are an olympiad-level mathematical reasoning assistant for AIMO-style problems.
+Solve 5-digit integer-answer competition problems with rigorous steps and explicit validation.
 
-Execution rules:
-1) Prefer exact integer/symbolic reasoning over approximations.
-2) Use Python for heavy arithmetic / combinatorics and to verify candidate values.
-3) Respect any modulus requested in the problem statement.
-4) End with exactly one line: FINAL_ANSWER: <integer>
+Execution protocol:
+1) Build a short plan (core identity, constraints, target quantity).
+2) Derive candidate values via exact symbolic/integer reasoning.
+3) Run at least one independent check (python, modular/bound/parity, or alternate derivation).
+4) Reject unsupported shortcuts:
+   - do not copy constants from the statement unless derived,
+   - do not output 0/1 without a forcing argument,
+   - do not trust decimal approximations for exact tasks.
+5) Emit a compact structured record before the final line:
+   RESULT_JSON: {"answer": <int>, "method": "<short-method-label>", "independent_check_passed": <true|false>}
+6) Respect the required modulus/range and end with exactly:
+   FINAL_ANSWER: <integer>
 """
 
 REPAIR_SYSTEM_PROMPT = """You are correcting a previous olympiad solution.
@@ -84,12 +91,44 @@ You are given tool observations from executed Python code.
 Continue from those observations and end with: FINAL_ANSWER: <integer>
 """
 
+FORCED_CODE_CHECK_SYSTEM_PROMPT = """You are an olympiad math assistant in strict verification mode.
+You must produce one compact python check to validate or refute the current candidate answer.
+End with RESULT_JSON and FINAL_ANSWER lines.
+"""
+
 STYLE_GUIDE = {
     "algebra": "Prioritize symbolic simplification, invariants, and exact substitutions.",
     "number_theory": "Prioritize modular arithmetic, valuations, divisor structure, and parity.",
     "combinatorics": "Prioritize counting arguments, bijections, recurrences, and generating-pattern checks.",
     "geometry": "Translate geometry constraints into exact relations and verify candidate values analytically.",
     "general": "Try two independent approaches before finalizing when feasible.",
+}
+
+CATEGORY_CHECKLIST = {
+    "number_theory": (
+        "- Check residue classes at decisive steps.\n"
+        "- Verify divisibility/valuation transitions explicitly.\n"
+        "- Confirm final normalization is with the target modulus only."
+    ),
+    "combinatorics": (
+        "- State counting model and exclusions clearly.\n"
+        "- Validate with a small sanity case or equivalent reformulation.\n"
+        "- Confirm no overcount/undercount before final line."
+    ),
+    "geometry": (
+        "- Name invariants/lemmas before substitutions.\n"
+        "- Cross-check using an independent analytic/synthetic route.\n"
+        "- Avoid diagram assumptions not implied by text."
+    ),
+    "algebra": (
+        "- Isolate key identities and domain constraints.\n"
+        "- Verify transformations are reversible or one-way with justification.\n"
+        "- Check candidate roots/solutions directly."
+    ),
+    "general": (
+        "- Use a primary route plus one lightweight contradiction check.\n"
+        "- Ensure final integer satisfies all statement constraints."
+    ),
 }
 
 ARCHETYPE_GUIDE = {
@@ -149,6 +188,14 @@ def _attempt_strategy(profile: ProblemProfile, attempt_index: int) -> str:
         ]
         return options[attempt_index % len(options)]
 
+    if profile.archetype == "divisor_arithmetic":
+        options = [
+            "factor-structure-first: express target via prime exponents/divisor sums.",
+            "modular-filter-first: prune impossible residues before exact computation.",
+            "constructive-check: derive formula then validate key terms with compact Python.",
+        ]
+        return options[attempt_index % len(options)]
+
     options = [
         "proof-first then compute.",
         "compute-first then prove consistency.",
@@ -157,32 +204,52 @@ def _attempt_strategy(profile: ProblemProfile, attempt_index: int) -> str:
     return options[attempt_index % len(options)]
 
 
-def _attempt_execution_mode(attempt_index: int) -> str:
+def _attempt_execution_mode(profile: ProblemProfile, attempt_index: int) -> str:
     """Approximate a 3:4 proof-first/code-first mix across attempts."""
 
-    cycle = [
-        "proof-first",
-        "code-first",
-        "code-first",
-        "proof-first",
-        "code-first",
-        "proof-first",
-        "code-first",
-    ]
+    if profile.complexity == "hard" or profile.category in {"number_theory", "combinatorics"}:
+        cycle = [
+            "code-first",
+            "proof-first",
+            "code-first",
+            "code-first",
+            "proof-first",
+            "code-first",
+        ]
+    else:
+        cycle = [
+            "proof-first",
+            "code-first",
+            "code-first",
+            "proof-first",
+            "code-first",
+            "proof-first",
+            "code-first",
+        ]
     return cycle[attempt_index % len(cycle)]
 
 
 def _detect_archetype(text: str) -> str:
     if re.search(r"nu[_\s]?[25]|valuation|legendre|lifting the exponent|lte", text):
         return "valuation_mod"
-    if re.search(r"catalan|tournament|arrange|number of possible|ordering", text):
-        return "combinatorial_count"
-    if re.search(r"f\s*\(|for all positive integers|function\s*[:\u2236]", text):
-        return "functional_equation"
     if re.search(r"triangle|circle|incircle|circumcircle|angle bisector|radical axis", text):
         return "geometry_configuration"
+    if re.search(
+        (
+            r"catalan|tournament|arrange|number of possible|ordering|"
+            r"divided into .*rectangles|square is divided|no two .*same perimeter|"
+            r"largest possible value|maximum possible value"
+        ),
+        text,
+    ):
+        return "combinatorial_count"
     if re.search(r"divisor|divides|coprime|norwegian|remainder", text):
         return "divisor_arithmetic"
+    if re.search(
+        r"(?:for all|for every|satisfies|functional equation|function\s*[:\u2236])",
+        text,
+    ) and re.search(r"\b(?:f|g|h)\s*\(", text):
+        return "functional_equation"
     return "general_olympiad"
 
 
@@ -204,10 +271,17 @@ def classify_problem(problem_text: str) -> str:
     # Fallback keyword routing.
     if re.search(r"triangle|circle|angle|perpendicular|parallel|midpoint", text):
         return "geometry"
+    if re.search(
+        (
+            r"ways|arrange|permutation|combination|subset|graph|color|"
+            r"rectangle|rectangles|partition|tiling|no two .*same perimeter|"
+            r"largest possible value|maximum possible value"
+        ),
+        text,
+    ):
+        return "combinatorics"
     if re.search(r"prime|divisible|mod|remainder|gcd|lcm", text):
         return "number_theory"
-    if re.search(r"ways|arrange|permutation|combination|subset|graph|color", text):
-        return "combinatorics"
     if re.search(r"polynomial|equation|root|coefficient|function|recurrence", text):
         return "algebra"
 
@@ -230,20 +304,34 @@ def estimate_problem_profile(problem_text: str) -> ProblemProfile:
         score += 1
 
     hard_patterns = [
-        r"\b\d+!\b",
-        r"\b2\^\d{2,}\b",
-        r"\b10\^\d{3,}\b",
+        r"\b\d+!",
+        r"\b\d+\s*\^\s*\{?\d{2,}!?\}?",
+        r"\b10\s*\^\s*\{?\d{3,}!?\}?",
         r"\bfor all\b",
         r"largest non-negative integer",
+        r"largest possible value",
+        r"maximum possible value",
+        r"no two .*same perimeter",
+        r"divided into .*rectangles",
         r"sufficiently large",
         r"unique such triangle",
         r"across all",
+        r"\\lfloor|floor\(",
     ]
     for pattern in hard_patterns:
         if re.search(pattern, text):
             score += 1
 
     if archetype in {"valuation_mod", "geometry_configuration", "combinatorial_count"}:
+        score += 1
+    if archetype == "divisor_arithmetic":
+        score += 1
+
+    # Large constants and nested arithmetic often correlate with harder AIMO items.
+    large_ints = re.findall(r"(?<!\d)\d{4,}(?!\d)", text)
+    if len(large_ints) >= 2:
+        score += 1
+    if len(large_ints) >= 5:
         score += 1
 
     if score >= 5:
@@ -253,7 +341,9 @@ def estimate_problem_profile(problem_text: str) -> ProblemProfile:
     else:
         complexity = "easy"
 
-    return ProblemProfile(category=category, complexity=complexity, score=score, archetype=archetype)
+    return ProblemProfile(
+        category=category, complexity=complexity, score=score, archetype=archetype
+    )
 
 
 def build_prompt(
@@ -263,13 +353,14 @@ def build_prompt(
     modulus: int | None,
     profile: ProblemProfile,
     hard_mode: bool,
+    force_code_first: bool = False,
 ) -> PromptBundle:
     """Compose a solve prompt with adaptive AIMO guidance."""
 
     style = STYLE_GUIDE.get(profile.category, STYLE_GUIDE["general"])
     archetype_hint = ARCHETYPE_GUIDE.get(profile.archetype, ARCHETYPE_GUIDE["general_olympiad"])
     attempt_strategy = _attempt_strategy(profile, attempt_index)
-    execution_mode = _attempt_execution_mode(attempt_index)
+    execution_mode = _attempt_execution_mode(profile, attempt_index)
     modulus_hint = (
         f"Known modulus for final normalization: {modulus}."
         if modulus is not None
@@ -295,6 +386,8 @@ def build_prompt(
             "- Avoid decimal approximations unless they are proven exact afterward."
         )
 
+    category_checklist = CATEGORY_CHECKLIST.get(profile.category, CATEGORY_CHECKLIST["general"])
+
     reliability_protocol = (
         "Reliability protocol:\n"
         "- Derive a primary solution route.\n"
@@ -302,6 +395,22 @@ def build_prompt(
         "- Verify final candidate against the required modulus and statement constraints.\n"
         "- If two routes disagree, resolve disagreement before final line."
     )
+
+    anti_shortcut_protocol = (
+        "AIMO anti-shortcut protocol:\n"
+        "- Do not pick an answer only because it appears in the statement.\n"
+        "- If candidate answer is small (especially 0/1), require an explicit forcing reason.\n"
+        "- If no robustly checked candidate exists, perform one additional targeted check before finalizing."
+    )
+
+    code_first_note = ""
+    if force_code_first:
+        code_first_note = (
+            "Mandatory execution mode for this attempt:\n"
+            "- You must include at least one executable python block before finalizing.\n"
+            "- The python block must test a decisive claim (not decorative arithmetic).\n"
+            "- If check and derivation disagree, fix the derivation before final output."
+        )
 
     user = f"""AIMO profile:
 - Category: {profile.category}
@@ -315,7 +424,11 @@ def build_prompt(
 - {modulus_hint}
 {hard_guidance}
 {geometry_guidance}
+Category-specific checklist:
+{category_checklist}
 {reliability_protocol}
+{anti_shortcut_protocol}
+{code_first_note}
 
 Problem:
 {problem_text}
@@ -323,8 +436,13 @@ Problem:
 Deliverable format:
 - Keep reasoning concise but rigorous.
 - Use Python when it materially improves reliability.
+- Python blocks must be clean and deterministic: no I/O, no randomness, no external files/network.
+- Keep Python checks small and efficient (prefer formulas over brute-force loops).
+- Print only decisive integers from checks.
 - If mode is code-first, write compact executable checks early and use them to validate the final value.
 - If mode is proof-first, derive the key identity before code checks.
+- Include one structured line before final answer:
+  RESULT_JSON: {{"answer": <integer>, "method": "<label>", "independent_check_passed": <true|false>}}
 - Final line must be exactly: FINAL_ANSWER: <integer>
 """
 
@@ -342,7 +460,9 @@ def build_repair_prompt(
     """Prompt for a focused second-pass correction."""
 
     modulus_hint = (
-        f"Normalize final answer modulo {modulus}." if modulus is not None else "Infer and apply the correct modulus."
+        f"Normalize final answer modulo {modulus}."
+        if modulus is not None
+        else "Infer and apply the correct modulus."
     )
 
     user = f"""The prior attempt likely has an extraction/consistency issue.
@@ -403,10 +523,52 @@ Rules:
 - Use the observations to refine or correct the solution.
 - If evidence is insufficient, emit one compact python block for the next check.
 - Prefer exact arithmetic and explicit invariant checks over guessing.
+- Any Python emitted must run fast (formulaic/vectorized), avoid brute-force scans when avoidable.
+- Include one structured line before final answer:
+  RESULT_JSON: {{"answer": <integer>, "method": "<label>", "independent_check_passed": <true|false>}}
 - End with exactly one line: FINAL_ANSWER: <integer>
 """
 
     return PromptBundle(system=AGENT_FOLLOWUP_SYSTEM_PROMPT, user=user)
+
+
+def build_forced_code_check_prompt(
+    problem_text: str,
+    *,
+    previous_response: str,
+    modulus: int | None,
+    profile: ProblemProfile,
+) -> PromptBundle:
+    """Prompt for mandatory compact code verification when no tool evidence exists."""
+
+    modulus_hint = (
+        f"Normalize the final answer modulo {modulus}."
+        if modulus is not None
+        else "Infer and apply the correct modulus from the statement."
+    )
+
+    user = f"""Run one decisive compact python check before finalizing.
+Category: {profile.category}
+Archetype: {profile.archetype}
+Complexity: {profile.complexity}
+{modulus_hint}
+
+Problem:
+{problem_text}
+
+Current reasoning/output:
+{previous_response}
+
+Rules:
+- Emit exactly one python block that tests a decisive identity/constraint.
+- Use deterministic exact arithmetic only (math/numpy/sympy allowed).
+- Print only decisive integer values needed for the final answer.
+- Then include:
+  RESULT_JSON: {{"answer": <integer>, "method": "<label>", "independent_check_passed": true}}
+- Final line must be exactly: FINAL_ANSWER: <integer>
+"""
+
+    return PromptBundle(system=FORCED_CODE_CHECK_SYSTEM_PROMPT, user=user)
 
 
 def build_verifier_prompt(
@@ -534,6 +696,7 @@ Candidate evidence:
 Audit rules:
 - Prefer candidates supported by multiple independent traces.
 - Penalize candidates that violate bounds, parity, residue constraints, or key invariants.
+- Penalize candidates that are only statement echoes without derivation support.
 - You must choose exactly one value from the candidate list.
 - Do not introduce a new number.
 - Final line must be exactly: FINAL_ANSWER: <integer>
@@ -582,6 +745,7 @@ Candidate evidence:
 Probe rules:
 - Attempt to refute the current leading candidate using contradiction checks.
 - Use an independent method (different route from the leading traces).
+- Reject candidates that look like unverified statement-number echoes.
 - If the leading candidate survives, output it; otherwise output the corrected value.
 - Final line must be exactly: FINAL_ANSWER: <integer>
 """
@@ -629,6 +793,7 @@ Rules:
 - You must select exactly one value from the answer options.
 - Do not introduce a new number.
 - Favor options supported by consistent independent traces and verified computations.
+- Downrank options that only appear as statement constants without supporting checks.
 - Final line must be exactly: FINAL_ANSWER: <integer>
 """
 
@@ -722,7 +887,9 @@ def build_final_extractor_prompt(
     """Prompt to force a strict final-answer line when prior output was incomplete."""
 
     modulus_hint = (
-        f"Normalize final answer modulo {modulus}." if modulus is not None else "Infer the modulus from the statement."
+        f"Normalize final answer modulo {modulus}."
+        if modulus is not None
+        else "Infer the modulus from the statement."
     )
 
     user = f"""Extract one final integer from the prior trace.

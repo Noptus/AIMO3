@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import json
 import re
 from collections import Counter
 from collections.abc import Iterable
@@ -12,6 +13,7 @@ FINAL_ANSWER_RE = re.compile(r"FINAL_ANSWER\s*:\s*([-+]?\d+)", flags=re.IGNORECA
 BOXED_RE = re.compile(r"\\boxed\{([^{}]+)\}")
 INTEGER_RE = re.compile(r"(?<!\d)([-+]?\d{1,12})(?!\d)")
 FULL_INTEGER_RE = re.compile(r"^\s*([-+]?\d+)\s*$")
+RESULT_JSON_RE = re.compile(r"RESULT_JSON\s*:\s*(\{[\s\S]{0,400}\})", flags=re.IGNORECASE)
 ANSWER_LINE_HINT_RE = re.compile(
     r"(?:final\s+answer|answer\s*(?:is|=|:)|therefore.*answer|thus.*answer|hence.*answer)",
     flags=re.IGNORECASE,
@@ -43,6 +45,14 @@ CODE_BLOCK_RE = re.compile(r"```(?:python|py)?\s*(.*?)```", flags=re.IGNORECASE 
 @dataclass(frozen=True)
 class AnswerParse:
     answer: int | None
+    source: str
+
+
+@dataclass(frozen=True)
+class StructuredParse:
+    answer: int | None
+    method: str
+    independent_check_passed: bool
     source: str
 
 
@@ -112,6 +122,7 @@ def _normalize_expr(expr: str) -> str:
 def parse_modulus(problem_text: str) -> int | None:
     """Try to extract the modulus required by the problem statement."""
 
+    candidates: list[tuple[int, int]] = []
     for pattern in MOD_PATTERNS:
         for match in pattern.finditer(problem_text):
             candidate = match.group(1).strip().rstrip(".,;:?)")
@@ -119,7 +130,12 @@ def parse_modulus(problem_text: str) -> int | None:
             if value is None:
                 continue
             if 2 <= value <= 1_000_000:
-                return value
+                candidates.append((match.start(), value))
+
+    if candidates:
+        # Prefer the final explicit modulus mention in the problem text.
+        candidates.sort(key=lambda item: item[0])
+        return candidates[-1][1]
 
     return None
 
@@ -145,8 +161,72 @@ def normalize_answer(value: int | str, modulus: int | None = None) -> int | None
     return raw % 100_000
 
 
+def parse_structured_result(text: str, modulus: int | None = None) -> StructuredParse:
+    """Parse optional structured output of the form RESULT_JSON: {...}."""
+
+    method = ""
+    independent = False
+
+    def _coerce_from_payload(payload: dict[str, object]) -> StructuredParse:
+        raw_answer = payload.get("answer")
+        answer: int | None = None
+        if isinstance(raw_answer, int):
+            answer = normalize_answer(raw_answer, modulus=modulus)
+        elif isinstance(raw_answer, str):
+            answer = normalize_answer(raw_answer, modulus=modulus)
+
+        raw_method = payload.get("method")
+        parsed_method = raw_method.strip() if isinstance(raw_method, str) else ""
+
+        raw_independent = payload.get("independent_check_passed")
+        parsed_independent = bool(raw_independent) if isinstance(raw_independent, bool) else False
+        return StructuredParse(
+            answer=answer,
+            method=parsed_method,
+            independent_check_passed=parsed_independent,
+            source="structured_json",
+        )
+
+    # Preferred explicit marker.
+    for match in RESULT_JSON_RE.finditer(text):
+        chunk = match.group(1).strip()
+        try:
+            payload = json.loads(chunk)
+        except Exception:
+            continue
+        if isinstance(payload, dict):
+            return _coerce_from_payload(payload)
+
+    # Conservative fallback: inspect short JSON-looking lines with answer key.
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line or "answer" not in line.lower():
+            continue
+        if not (line.startswith("{") and line.endswith("}")):
+            continue
+        if len(line) > 400:
+            continue
+        try:
+            payload = json.loads(line)
+        except Exception:
+            continue
+        if isinstance(payload, dict):
+            return _coerce_from_payload(payload)
+
+    return StructuredParse(
+        answer=None,
+        method=method,
+        independent_check_passed=independent,
+        source="none",
+    )
+
+
 def parse_answer_from_text(text: str, modulus: int | None = None) -> AnswerParse:
     """Extract a final numeric answer from model output."""
+
+    structured = parse_structured_result(text, modulus=modulus)
+    if structured.answer is not None:
+        return AnswerParse(answer=structured.answer, source=structured.source)
 
     match = FINAL_ANSWER_RE.search(text)
     if match:
@@ -159,7 +239,9 @@ def parse_answer_from_text(text: str, modulus: int | None = None) -> AnswerParse
         return AnswerParse(answer=value, source="boxed")
 
     final_line_candidates = [
-        line.strip() for line in text.splitlines() if line.strip() and ANSWER_LINE_HINT_RE.search(line)
+        line.strip()
+        for line in text.splitlines()
+        if line.strip() and ANSWER_LINE_HINT_RE.search(line)
     ]
     for line in reversed(final_line_candidates):
         ints = INTEGER_RE.findall(line)
